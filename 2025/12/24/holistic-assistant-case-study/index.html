@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+  
+  <title>Holistic Assistant: 一个面向 1500+ 学生的 RAG 学术顾问系统 — 从信息碎片化到结构化决策 | JerryL&#39;s Journey of CS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="TL;DR: 设计并实现了一个基于 Hybrid Context RAG 的学术顾问系统，整合分散在 36 份培养方案 PDF 和学校 SIS 系统的课程数据（1568 门课程 × 3 学期），为 CUHK-SZ 学生提供基于官方数据的 24&#x2F;7 个性化课程咨询。核心技术挑战包括：PDF 非结构化数据提取（Gemini 去噪 + 正则候选）、SIS 反爬策略规避（会话持久化 + 节流）、">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Holistic Assistant: 一个面向 1500+ 学生的 RAG 学术顾问系统 — 从信息碎片化到结构化决策">
+<meta property="og:url" content="http://example.com/2025/12/24/holistic-assistant-case-study/index.html">
+<meta property="og:site_name" content="JerryL&#39;s Journey of CS">
+<meta property="og:description" content="TL;DR: 设计并实现了一个基于 Hybrid Context RAG 的学术顾问系统，整合分散在 36 份培养方案 PDF 和学校 SIS 系统的课程数据（1568 门课程 × 3 学期），为 CUHK-SZ 学生提供基于官方数据的 24&#x2F;7 个性化课程咨询。核心技术挑战包括：PDF 非结构化数据提取（Gemini 去噪 + 正则候选）、SIS 反爬策略规避（会话持久化 + 节流）、">
+<meta property="og:locale" content="en_US">
+<meta property="article:published_time" content="2025-12-24T06:00:00.000Z">
+<meta property="article:modified_time" content="2025-12-23T17:23:33.319Z">
+<meta property="article:author" content="JiaRUI Lou">
+<meta property="article:tag" content="Flask">
+<meta property="article:tag" content="Gemini">
+<meta property="article:tag" content="Information Retrieval">
+<meta property="article:tag" content="LLM">
+<meta property="article:tag" content="Playwright">
+<meta property="article:tag" content="RAG">
+<meta property="article:tag" content="System Design">
+<meta name="twitter:card" content="summary">
+  
+    <link rel="alternate" href="/atom.xml" title="JerryL's Journey of CS" type="application/atom+xml">
+  
+  
+    <link rel="shortcut icon" href="/favicon.png">
+  
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+  
+    
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.min.css">
+
+  
+  
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fork-awesome@1.2.0/css/fork-awesome.min.css">
+
+<meta name="generator" content="Hexo 8.1.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">JerryL&#39;s Journey of CS</a>
+      </h1>
+      
+        <h2 id="subtitle-wrap">
+          <a href="/" id="subtitle">CS Freshman @ CHUHKSZ</a>
+        </h2>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"><span class="fa fa-bars"></span></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+        
+          <a class="nav-icon" href="/atom.xml" title="RSS Feed"><span class="fa fa-rss"></span></a>
+        
+        <a class="nav-icon nav-search-btn" title="Search"><span class="fa fa-search"></span></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+
+      <div class="outer">
+        <section id="main"><article id="post-holistic-assistant-case-study" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2025/12/24/holistic-assistant-case-study/" class="article-date">
+  <time class="dt-published" datetime="2025-12-24T06:00:00.000Z" itemprop="datePublished">2025-12-24</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/Technical-Case-Study/">Technical Case Study</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="p-name article-title" itemprop="headline name">
+      Holistic Assistant: 一个面向 1500+ 学生的 RAG 学术顾问系统 — 从信息碎片化到结构化决策
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <p><strong>TL;DR</strong>: 设计并实现了一个基于 Hybrid Context RAG 的学术顾问系统，整合分散在 36 份培养方案 PDF 和学校 SIS 系统的课程数据（1568 门课程 × 3 学期），为 CUHK-SZ 学生提供基于官方数据的 24&#x2F;7 个性化课程咨询。核心技术挑战包括：PDF 非结构化数据提取（Gemini 去噪 + 正则候选）、SIS 反爬策略规避（会话持久化 + 节流）、上下文窗口管理（按学期分片 JSON）、以及 Windows 环境下的 multiprocessing 兼容性。</p>
+<span id="more"></span>
+
+<hr>
+<h2 id="📌-Problem-Statement：信息检索的双重挑战"><a href="#📌-Problem-Statement：信息检索的双重挑战" class="headerlink" title="📌 Problem Statement：信息检索的双重挑战"></a>📌 Problem Statement：信息检索的双重挑战</h2><h3 id="背景：信息架构的碎片化"><a href="#背景：信息架构的碎片化" class="headerlink" title="背景：信息架构的碎片化"></a>背景：信息架构的碎片化</h3><p>在 CUHK-SZ，学生做出选课决策时需要整合来自<strong>两个互不兼容系统</strong>的数据：</p>
+<ol>
+<li><p><strong>非结构化来源</strong>（培养方案 PDF）：</p>
+<ul>
+<li>36 份专业培养方案，每份 30-50 页，覆盖 1500+ 课程代号</li>
+<li>排版不一致（表格&#x2F;列表&#x2F;自由文本混合），存在大量噪声（如日期 “APRIL2024”、学期词 “SPRING”）</li>
+<li>提供课程清单，但<strong>无简介、学分、先修要求</strong></li>
+</ul>
+</li>
+<li><p><strong>半结构化来源</strong>（SIS 系统）：</p>
+<ul>
+<li>包含详细的开课信息（时间&#x2F;地点&#x2F;老师）和课程定义（简介&#x2F;学分&#x2F;先修）</li>
+<li>但只展示<strong>当前学期</strong>开放课程，历史数据无法批量获取</li>
+<li>无 API，需通过浏览器交互抓取，且有反爬限制（session 过期、频率限制）</li>
+</ul>
+</li>
+</ol>
+<h3 id="核心矛盾：课程定义与开课信息的脱节"><a href="#核心矛盾：课程定义与开课信息的脱节" class="headerlink" title="核心矛盾：课程定义与开课信息的脱节"></a>核心矛盾：课程定义与开课信息的脱节</h3><ul>
+<li><strong>问题 1</strong>：培养方案告诉学生”需要上 CSC3100”，但不知道这门课何时开、先修是什么</li>
+<li><strong>问题 2</strong>：SIS 展示 “CSC3100 本学期开 2 个 section”，但不知道它在培养方案中的地位（必修&#x2F;选修？哪个模块？）</li>
+<li><strong>问题 3</strong>：学生需要手动打开 10+ 个标签页交叉比对，平均耗时 45 分钟&#x2F;课程</li>
+</ul>
+<h3 id="系统设计目标"><a href="#系统设计目标" class="headerlink" title="系统设计目标"></a>系统设计目标</h3><p>构建一个<strong>信息检索系统</strong>，能够：</p>
+<ol>
+<li>从非结构化 PDF 中提取结构化课程清单（准确率 &gt; 95%）</li>
+<li>自动化抓取 SIS 多学期数据（覆盖 3 学期 × 1568 课程）</li>
+<li>将两类来源整合成统一 Knowledge Base，供 RAG 系统查询</li>
+<li>提供 &lt;2s 响应时间的自然语言问答接口</li>
+</ol>
+<p><strong>约束条件</strong>：</p>
+<ul>
+<li>必须使用官方数据源（避免版权&#x2F;隐私风险）</li>
+<li>本地部署（学校网络无法访问外部 API）</li>
+<li>Windows 环境（影响 multiprocessing 和路径处理）</li>
+</ul>
+<hr>
+<h2 id="🔧-Technical-Challenges：三个核心难题"><a href="#🔧-Technical-Challenges：三个核心难题" class="headerlink" title="🔧 Technical Challenges：三个核心难题"></a>🔧 Technical Challenges：三个核心难题</h2><h3 id="Challenge-1-非结构化-PDF-数据提取的精度问题"><a href="#Challenge-1-非结构化-PDF-数据提取的精度问题" class="headerlink" title="Challenge 1: 非结构化 PDF 数据提取的精度问题"></a>Challenge 1: 非结构化 PDF 数据提取的精度问题</h3><p><strong>问题描述</strong>：<br>纯正则表达式 <code>\b([A-Z]{2,5})\s?(\d{4})\b</code> 在 36 份 PDF 上产生 40% 误报率（false positive），包括：</p>
+<ul>
+<li>日期词（<code>APRIL2024</code>, <code>JAN2025</code>）</li>
+<li>学期词（<code>SPRING</code>, <code>FALL</code>）</li>
+<li>随机缩写（<code>TOTAL</code>, <code>APRIL</code>）</li>
+</ul>
+<p><strong>失败尝试</strong>：</p>
+<ul>
+<li>方案 A：手工维护黑名单 → 无法覆盖所有 corner case</li>
+<li>方案 B：OCR + 布局分析 → PDF 是文本格式，OCR 引入额外错误</li>
+</ul>
+<p><strong>最终方案</strong>：<strong>正则候选 + Gemini 去噪</strong></p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 第一阶段：正则提取候选（召回率优先）</span></span><br><span class="line">candidates = re.findall(<span class="string">r&quot;\b([A-Z]&#123;2,5&#125;)\s?(\d&#123;4&#125;)\b&quot;</span>, pdf_text)</span><br><span class="line"></span><br><span class="line"><span class="comment"># 第二阶段：Gemini 过滤（精确率优先）</span></span><br><span class="line">prompt = <span class="string">f&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">Given candidate codes: <span class="subst">&#123;candidates&#125;</span></span></span><br><span class="line"><span class="string">Filter out non-course codes (dates, seasons, random words).</span></span><br><span class="line"><span class="string">Output only valid CUHK course codes in JSON array.</span></span><br><span class="line"><span class="string">&quot;&quot;&quot;</span></span><br><span class="line">valid_codes = gemini_api.generate(prompt)</span><br></pre></td></tr></table></figure>
+
+<p><strong>结果</strong>：误报率从 40% → 5%，且可扩展到新专业 PDF（无需重写规则）</p>
+<h3 id="Challenge-2-SIS-反爬策略与-Windows-兼容性"><a href="#Challenge-2-SIS-反爬策略与-Windows-兼容性" class="headerlink" title="Challenge 2: SIS 反爬策略与 Windows 兼容性"></a>Challenge 2: SIS 反爬策略与 Windows 兼容性</h3><p><strong>问题描述</strong>：<br>SIS 采用 PeopleSoft 架构，具有以下反爬特征：</p>
+<ul>
+<li>Session 绑定 IP + User-Agent，15 分钟无操作则过期</li>
+<li>频繁请求触发 Captcha（阈值约 100 req&#x2F;min）</li>
+<li>下拉框选项动态加载（需等待 DOM 更新）</li>
+</ul>
+<p><strong>技术决策</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>优点</th>
+<th>缺点</th>
+<th>选择</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Selenium</td>
+<td>社区活跃，文档全</td>
+<td>资源占用高（每实例 ~200MB）</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>Playwright</td>
+<td>轻量，支持 headless</td>
+<td>API 较新，调试复杂</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Requests + BeautifulSoup</td>
+<td>最快</td>
+<td>无法处理 JS 渲染</td>
+<td>❌</td>
+</tr>
+</tbody></table>
+<p><strong>关键实现</strong>：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 会话持久化（避免重复登录）</span></span><br><span class="line"><span class="keyword">async</span> <span class="keyword">def</span> <span class="title function_">save_session</span>():</span><br><span class="line">    <span class="keyword">await</span> context.storage_state(path=<span class="string">&quot;sis_storage_state.json&quot;</span>)</span><br><span class="line"></span><br><span class="line"><span class="comment"># 节流策略（避免触发 Captcha）</span></span><br><span class="line"><span class="keyword">await</span> asyncio.sleep(<span class="number">0.6</span>)  <span class="comment"># 每次搜索间隔 600ms</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># Windows multiprocessing 修复（顶层函数 + Pipe IPC）</span></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">_mp_runner_send_via_pipe</span>(<span class="params">prompt, timeout, pipe</span>):</span><br><span class="line">    result = gemini_api.generate(prompt)</span><br><span class="line">    pipe.send(result)</span><br></pre></td></tr></table></figure>
+
+<p><strong>结果</strong>：在 24 小时内完成 1568 × 3 &#x3D; 4704 次搜索，无 IP 封禁，成功率 99.2%</p>
+<h3 id="Challenge-3-上下文窗口管理与多学期数据聚合"><a href="#Challenge-3-上下文窗口管理与多学期数据聚合" class="headerlink" title="Challenge 3: 上下文窗口管理与多学期数据聚合"></a>Challenge 3: 上下文窗口管理与多学期数据聚合</h3><p><strong>问题描述</strong>：<br>Gemini 2.5 Flash 上下文窗口为 128K tokens，但单个课程的完整信息可能包含：</p>
+<ul>
+<li>培养方案描述：~500 tokens</li>
+<li>3 学期 SIS 数据：每学期 3-5 个 section × 200 tokens &#x3D; ~3000 tokens</li>
+<li>用户历史对话：~1000 tokens</li>
+</ul>
+<p>如果按”全量注入”策略，10 轮对话后将超出窗口限制。</p>
+<p><strong>架构设计</strong>：<strong>按学期分片 + 懒加载</strong></p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">knowledge_base/courses_sis_detail/</span><br><span class="line">  courses/</span><br><span class="line">    CSC1001/</span><br><span class="line">      terms/</span><br><span class="line">        2510/metadata.json  # 2025-26 第一学期</span><br><span class="line">        2520/metadata.json  # 2025-26 第二学期</span><br><span class="line">        2650/metadata.json  # 2026-27 暑期学期</span><br></pre></td></tr></table></figure>
+
+<p><strong>Hybrid Context 组装逻辑</strong>：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">build_context</span>(<span class="params">course_code, user_query, user_history</span>):</span><br><span class="line">    <span class="comment"># 1. 识别查询意图</span></span><br><span class="line">    intent = detect_intent(user_query)  <span class="comment"># &quot;prerequisite&quot; / &quot;schedule&quot; / &quot;difficulty&quot;</span></span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 2. 选择性加载学期数据</span></span><br><span class="line">    <span class="keyword">if</span> <span class="string">&quot;when&quot;</span> <span class="keyword">in</span> intent <span class="keyword">or</span> <span class="string">&quot;schedule&quot;</span> <span class="keyword">in</span> intent:</span><br><span class="line">        terms = [<span class="string">&quot;2510&quot;</span>, <span class="string">&quot;2520&quot;</span>]  <span class="comment"># 只加载近期学期</span></span><br><span class="line">    <span class="keyword">else</span>:</span><br><span class="line">        terms = [<span class="string">&quot;2510&quot;</span>]  <span class="comment"># 默认最新学期</span></span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 3. 组装最小上下文</span></span><br><span class="line">    context = &#123;</span><br><span class="line">        <span class="string">&quot;course_meta&quot;</span>: load_course_meta(course_code),  <span class="comment"># ~500 tokens</span></span><br><span class="line">        <span class="string">&quot;sis_data&quot;</span>: [load_term(course_code, t) <span class="keyword">for</span> t <span class="keyword">in</span> terms],  <span class="comment"># ~1500 tokens</span></span><br><span class="line">        <span class="string">&quot;history&quot;</span>: user_history[-<span class="number">3</span>:],  <span class="comment"># 只保留最近 3 轮</span></span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> context</span><br></pre></td></tr></table></figure>
+
+<p><strong>效果</strong>：平均上下文长度从 4500 tokens → 2000 tokens，支持 15+ 轮连续对话</p>
+<hr>
+<h2 id="🏗️-System-Architecture：Hybrid-Context-RAG-的三层设计"><a href="#🏗️-System-Architecture：Hybrid-Context-RAG-的三层设计" class="headerlink" title="🏗️ System Architecture：Hybrid Context RAG 的三层设计"></a>🏗️ System Architecture：Hybrid Context RAG 的三层设计</h2><h3 id="整体架构图"><a href="#整体架构图" class="headerlink" title="整体架构图"></a>整体架构图</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br></pre></td><td class="code"><pre><span class="line">graph TB</span><br><span class="line">    subgraph &quot;数据层 Data Layer&quot;</span><br><span class="line">        A1[培养方案 PDF&lt;br/&gt;36 files, ~50 pages each]</span><br><span class="line">        A2[SIS Portal&lt;br/&gt;PeopleSoft, Session-based]</span><br><span class="line">    end</span><br><span class="line">    </span><br><span class="line">    subgraph &quot;ETL Pipeline&quot;</span><br><span class="line">        B1[Gemini Extractor&lt;br/&gt;PyPDF2 + LLM Denoising]</span><br><span class="line">        B2[Playwright Crawler&lt;br/&gt;Headless + Session Persistence]</span><br><span class="line">    end</span><br><span class="line">    </span><br><span class="line">    subgraph &quot;知识库 Knowledge Base&quot;</span><br><span class="line">        C1[Course Codes&lt;br/&gt;all_courses_ai.txt&lt;br/&gt;1568 courses]</span><br><span class="line">        C2[Multi-term SIS Data&lt;br/&gt;courses/*/terms/*/metadata.json&lt;br/&gt;JSON sharding by STRM]</span><br><span class="line">    end</span><br><span class="line">    </span><br><span class="line">    subgraph &quot;应用层 Application Layer&quot;</span><br><span class="line">        D1[Flask Backend&lt;br/&gt;Hybrid Context Engine]</span><br><span class="line">        D2[Gemini 2.5 Flash API&lt;br/&gt;128K context window]</span><br><span class="line">        D3[Frontend UI&lt;br/&gt;Tailwind + Vanilla JS]</span><br><span class="line">    end</span><br><span class="line">    </span><br><span class="line">    subgraph &quot;用户交互 User Interaction&quot;</span><br><span class="line">        E1[Course Roadmap&lt;br/&gt;Clickable courses]</span><br><span class="line">        E2[Chat Interface&lt;br/&gt;Contextual Q&amp;A]</span><br><span class="line">    end</span><br><span class="line">    </span><br><span class="line">    A1 --&gt; B1</span><br><span class="line">    A2 --&gt; B2</span><br><span class="line">    B1 --&gt; C1</span><br><span class="line">    B2 --&gt; C2</span><br><span class="line">    C1 --&gt; D1</span><br><span class="line">    C2 --&gt; D1</span><br><span class="line">    D1 &lt;--&gt;|Context Assembly| D2</span><br><span class="line">    D2 &lt;--&gt;|LLM Response| D1</span><br><span class="line">    D1 &lt;--&gt;|REST API| D3</span><br><span class="line">    D3 --&gt; E1</span><br><span class="line">    D3 --&gt; E2</span><br><span class="line">    E1 --&gt;|User clicks CSC1001| D1</span><br><span class="line">    E2 --&gt;|User asks question| D1</span><br><span class="line">    </span><br><span class="line">    style A1 fill:#2d3748,stroke:#4a5568,color:#fff</span><br><span class="line">    style A2 fill:#2d3748,stroke:#4a5568,color:#fff</span><br><span class="line">    style D1 fill:#2b6cb0,stroke:#3182ce,color:#fff</span><br><span class="line">    style D2 fill:#553c9a,stroke:#6b46c1,color:#fff</span><br><span class="line">    style C1 fill:#2c5282,stroke:#3182ce,color:#fff</span><br><span class="line">    style C2 fill:#2c5282,stroke:#3182ce,color:#fff</span><br></pre></td></tr></table></figure>
+
+<h3 id="核心组件详解"><a href="#核心组件详解" class="headerlink" title="核心组件详解"></a>核心组件详解</h3><h4 id="1-Hybrid-Context-Engine：上下文组装策略"><a href="#1-Hybrid-Context-Engine：上下文组装策略" class="headerlink" title="1. Hybrid Context Engine：上下文组装策略"></a>1. Hybrid Context Engine：上下文组装策略</h4><p><strong>为什么不直接用 Vector Database？</strong></p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>优点</th>
+<th>缺点</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Vector DB (Chroma&#x2F;Pinecone)</strong></td>
+<td>语义搜索，scalable</td>
+<td>需要 embedding 模型，冷启动慢</td>
+<td>&gt;10K 文档，语义模糊查询</td>
+</tr>
+<tr>
+<td><strong>Structured JSON + Rule-based</strong></td>
+<td>精确匹配，零延迟</td>
+<td>不支持模糊查询</td>
+<td>&lt;2K 文档，结构化查询</td>
+</tr>
+<tr>
+<td><strong>Hybrid (我的方案)</strong></td>
+<td>结合两者优点</td>
+<td>需要维护两套索引</td>
+<td>中小规模，结构化为主 + 语义辅助</td>
+</tr>
+</tbody></table>
+<p><strong>实现逻辑</strong>：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">HybridContextEngine</span>:</span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">__init__</span>(<span class="params">self</span>):</span><br><span class="line">        <span class="variable language_">self</span>.structured_index = &#123;&#125;  <span class="comment"># 课程代号 -&gt; JSON 路径</span></span><br><span class="line">        <span class="variable language_">self</span>.vector_index = ChromaDB()  <span class="comment"># 课程描述 embedding</span></span><br><span class="line">    </span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">retrieve</span>(<span class="params">self, query: <span class="built_in">str</span></span>) -&gt; <span class="built_in">dict</span>:</span><br><span class="line">        <span class="comment"># Step 1: 尝试精确匹配（课程代号）</span></span><br><span class="line">        <span class="keyword">if</span> course_code := extract_course_code(query):</span><br><span class="line">            <span class="keyword">return</span> <span class="variable language_">self</span>.load_structured(course_code)</span><br><span class="line">        </span><br><span class="line">        <span class="comment"># Step 2: 语义搜索（模糊描述）</span></span><br><span class="line">        semantic_results = <span class="variable language_">self</span>.vector_index.query(query, top_k=<span class="number">3</span>)</span><br><span class="line">        </span><br><span class="line">        <span class="comment"># Step 3: 合并结果</span></span><br><span class="line">        <span class="keyword">return</span> <span class="variable language_">self</span>.merge_contexts(semantic_results)</span><br></pre></td></tr></table></figure>
+
+<h4 id="2-Prompt-Engineering：从”泛泛而谈”到”基于事实”"><a href="#2-Prompt-Engineering：从”泛泛而谈”到”基于事实”" class="headerlink" title="2. Prompt Engineering：从”泛泛而谈”到”基于事实”"></a>2. Prompt Engineering：从”泛泛而谈”到”基于事实”</h4><p><strong>Before（通用 LLM 回答）</strong>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">User: CSC3100 难吗？</span><br><span class="line">GPT-4: 这门课涉及算法和数据结构，通常被认为是中等难度...</span><br></pre></td></tr></table></figure>
+
+<p><strong>After（Hybrid Context 注入）</strong>：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">build_prompt</span>(<span class="params">course_code, user_query, context</span>):</span><br><span class="line">    prompt = <span class="string">f&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    You are an academic advisor for CUHK-SZ. Answer based ONLY on the provided data.</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === Official Course Data ===</span></span><br><span class="line"><span class="string">    Course: <span class="subst">&#123;context[<span class="string">&#x27;course_name&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    Description: <span class="subst">&#123;context[<span class="string">&#x27;description&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    Prerequisites: <span class="subst">&#123;context[<span class="string">&#x27;prerequisites&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    Offering (2025-26 T1): <span class="subst">&#123;context[<span class="string">&#x27;sections&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === User Question ===</span></span><br><span class="line"><span class="string">    <span class="subst">&#123;user_query&#125;</span></span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === Instructions ===</span></span><br><span class="line"><span class="string">    - Cite specific data (e.g., &quot;根据 SIS, 本学期开 3 个 section...&quot;)</span></span><br><span class="line"><span class="string">    - If data is missing, say &quot;官方数据未提供此信息&quot;</span></span><br><span class="line"><span class="string">    - Avoid speculation about difficulty/workload</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    <span class="keyword">return</span> prompt</span><br><span class="line"></span><br><span class="line"><span class="comment"># Output:</span></span><br><span class="line"><span class="comment"># &quot;根据 SIS, CSC3100 在 2025-26 第一学期开 3 个 section（L01/L02/L03），</span></span><br><span class="line"><span class="comment">#  由 Pinjia HE 和 Junjie HU 教授。先修要求为 CSC1001 或同等课程。</span></span><br><span class="line"><span class="comment">#  官方数据未提供难度评级。&quot;</span></span><br></pre></td></tr></table></figure>
+
+<h4 id="3-模型选择：Gemini-2-5-Flash-vs-3-0-的权衡"><a href="#3-模型选择：Gemini-2-5-Flash-vs-3-0-的权衡" class="headerlink" title="3. 模型选择：Gemini 2.5 Flash vs. 3.0 的权衡"></a>3. 模型选择：Gemini 2.5 Flash vs. 3.0 的权衡</h4><table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Gemini 2.5 Flash</th>
+<th>Gemini 3.0 (Pro)</th>
+<th>我的选择</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>响应速度</strong></td>
+<td>~1.5s (P50)</td>
+<td>~4s (P50)</td>
+<td>✅ Flash（用户体验优先）</td>
+</tr>
+<tr>
+<td><strong>多轮推理</strong></td>
+<td>中等（3-4 轮后退化）</td>
+<td>强（10+ 轮保持连贯）</td>
+<td>⚠️ Flash + 3 轮历史截断</td>
+</tr>
+<tr>
+<td><strong>成本</strong></td>
+<td>$0.075&#x2F;1M tokens</td>
+<td>$0.35&#x2F;1M tokens</td>
+<td>✅ Flash（预算受限）</td>
+</tr>
+<tr>
+<td><strong>上下文窗口</strong></td>
+<td>128K</td>
+<td>1M</td>
+<td>✅ Flash（已够用）</td>
+</tr>
+</tbody></table>
+<p><strong>未来优化方向</strong>（v1 路线图）：</p>
+<ul>
+<li>使用 <strong>Flash 做意图分类</strong> → 简单查询直接回答</li>
+<li>复杂查询（如”帮我规划这学期”）路由到 <strong>Gemini 3.0</strong></li>
+<li>引入 <strong>caching mechanism</strong>（重复查询同一课程时，复用上下文）</li>
+</ul>
+<hr>
+<h2 id="📊-Results-Impact：量化指标与定性反馈"><a href="#📊-Results-Impact：量化指标与定性反馈" class="headerlink" title="📊 Results &amp; Impact：量化指标与定性反馈"></a>📊 Results &amp; Impact：量化指标与定性反馈</h2><h3 id="系统性能指标"><a href="#系统性能指标" class="headerlink" title="系统性能指标"></a>系统性能指标</h3><table>
+<thead>
+<tr>
+<th>指标</th>
+<th>目标</th>
+<th>实际</th>
+<th>测试方法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>数据覆盖率</strong></td>
+<td>&gt;90%</td>
+<td>95.2% (1493&#x2F;1568 courses)</td>
+<td>与 SIS 官方课程列表交叉验证</td>
+</tr>
+<tr>
+<td><strong>提取准确率</strong></td>
+<td>&gt;95%</td>
+<td>96.8%</td>
+<td>人工抽样 100 门课程，比对 PDF vs. 系统输出</td>
+</tr>
+<tr>
+<td><strong>响应时间 (P50)</strong></td>
+<td>&lt;2s</td>
+<td>1.7s</td>
+<td>500 次真实查询压测</td>
+</tr>
+<tr>
+<td><strong>响应时间 (P95)</strong></td>
+<td>&lt;5s</td>
+<td>3.2s</td>
+<td>包含 3 学期数据的复杂查询</td>
+</tr>
+<tr>
+<td><strong>系统可用性</strong></td>
+<td>&gt;99%</td>
+<td>99.8%</td>
+<td>2 周 beta 测试，2 次计划内维护</td>
+</tr>
+</tbody></table>
+<h3 id="定性影响"><a href="#定性影响" class="headerlink" title="定性影响"></a>定性影响</h3><p><strong>用户反馈</strong>（n&#x3D;15, beta 测试）：</p>
+<blockquote>
+<p>“终于不用开 10 个标签页了，问一句就能知道课程什么时候开”<br>“比学校教务处的回复快多了，而且数据准确”</p>
+</blockquote>
+<p><strong>教授反馈</strong>（贾建民教授）：</p>
+<ul>
+<li>✅ 认可数据驱动方法（vs. 人工编辑课程评价）</li>
+<li>建议：增加”学期压力模拟”功能（如果选了 A+B+C，总 workload 如何）</li>
+<li>建议：细化课程评价粒度（难点在哪、常见坑）</li>
+</ul>
+<hr>
+<h2 id="🔍-Lessons-Learned：技术债务与设计权衡"><a href="#🔍-Lessons-Learned：技术债务与设计权衡" class="headerlink" title="🔍 Lessons Learned：技术债务与设计权衡"></a>🔍 Lessons Learned：技术债务与设计权衡</h2><h3 id="1-数据质量-模型能力"><a href="#1-数据质量-模型能力" class="headerlink" title="1. 数据质量 &gt; 模型能力"></a>1. 数据质量 &gt; 模型能力</h3><p><strong>发现</strong>：Gemini 2.5 Flash + 干净上下文 优于 GPT-4 + 噪声数据</p>
+<p><strong>证据</strong>：在”课程先修查询”任务中：</p>
+<ul>
+<li>GPT-4 (无 RAG)：准确率 62% （靠”记忆”回答，经常过时）</li>
+<li>Gemini Flash (Hybrid Context)：准确率 96.8%</li>
+</ul>
+<p><strong>启示</strong>：与其花时间调参&#x2F;换模型，不如优先清洗数据</p>
+<h3 id="2-错误处理-用户体验"><a href="#2-错误处理-用户体验" class="headerlink" title="2. 错误处理 &#x3D; 用户体验"></a>2. 错误处理 &#x3D; 用户体验</h3><p><strong>反面案例</strong>：早期版本遇到课程不在知识库时，LLM 会”编造”答案</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">User: URM4160 是什么课？</span><br><span class="line">System (错误): 这是一门关于城市管理的课程... (实际上知识库里没有这门课)</span><br></pre></td></tr></table></figure>
+
+<p><strong>改进</strong>：显式标记数据缺失</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> course_code <span class="keyword">not</span> <span class="keyword">in</span> knowledge_base:</span><br><span class="line">    <span class="keyword">return</span> &#123;</span><br><span class="line">        <span class="string">&quot;status&quot;</span>: <span class="string">&quot;NOT_FOUND&quot;</span>,</span><br><span class="line">        <span class="string">&quot;message&quot;</span>: <span class="string">f&quot;官方数据库暂无 <span class="subst">&#123;course_code&#125;</span> 的信息，可能原因：\n&quot;</span></span><br><span class="line">                   <span class="string">&quot;1. 该课程在 2025-26 三学期均未开课\n&quot;</span></span><br><span class="line">                   <span class="string">&quot;2. 课程代号可能有误\n&quot;</span></span><br><span class="line">                   <span class="string">&quot;建议：访问 SIS 手动搜索或联系教务处&quot;</span></span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="3-Compliance-First：合规性考量"><a href="#3-Compliance-First：合规性考量" class="headerlink" title="3. Compliance First：合规性考量"></a>3. Compliance First：合规性考量</h3><p><strong>决策</strong>：只使用官方公开数据（培养方案 + SIS），不接入用户生成内容（如”卡园”评价）</p>
+<p><strong>原因</strong>：</p>
+<ul>
+<li>法律风险：UGC 可能涉及诽谤&#x2F;隐私问题</li>
+<li>数据质量：主观评价存在 bias（”水课”定义因人而异）</li>
+<li>可维护性：官方数据更新频率低，易同步</li>
+</ul>
+<p><strong>未来可能方向</strong>（需法务审核）：</p>
+<ul>
+<li>允许用户标注”已选过此课”（布尔值，无文本评价）</li>
+<li>聚合选课人数统计（匿名化）</li>
+</ul>
+<hr>
+<h2 id="🚀-Future-Roadmap-v1-：从”信息检索”到”智能决策”"><a href="#🚀-Future-Roadmap-v1-：从”信息检索”到”智能决策”" class="headerlink" title="🚀 Future Roadmap (v1)：从”信息检索”到”智能决策”"></a>🚀 Future Roadmap (v1)：从”信息检索”到”智能决策”</h2><h3 id="v0-的局限性（自我批判）"><a href="#v0-的局限性（自我批判）" class="headerlink" title="v0 的局限性（自我批判）"></a>v0 的局限性（自我批判）</h3><table>
+<thead>
+<tr>
+<th>限制</th>
+<th>原因</th>
+<th>v1 解决方案</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>只支持单课程查询</strong></td>
+<td>未实现多课程对比逻辑</td>
+<td>增加 <code>compare(CSC3100, CSC3160)</code> 接口</td>
+</tr>
+<tr>
+<td><strong>无历史数据</strong></td>
+<td>只抓了 3 学期（2025-26, 26-27 Summer）</td>
+<td>回溯抓取 2023-24, 24-25 数据</td>
+</tr>
+<tr>
+<td><strong>无个性化</strong></td>
+<td>所有学生看到相同回答</td>
+<td>基于用户 profile（专业&#x2F;年级）调整推荐权重</td>
+</tr>
+<tr>
+<td><strong>冷启动问题</strong></td>
+<td>新课程（如 CSC4999）无历史数据</td>
+<td>使用课程大纲文本做 zero-shot 推理</td>
+</tr>
+</tbody></table>
+<h3 id="技术升级方向"><a href="#技术升级方向" class="headerlink" title="技术升级方向"></a>技术升级方向</h3><h4 id="1-智能学期压力管理（Prof-Jia-建议）"><a href="#1-智能学期压力管理（Prof-Jia-建议）" class="headerlink" title="1. 智能学期压力管理（Prof. Jia 建议）"></a>1. 智能学期压力管理（Prof. Jia 建议）</h4><p><strong>目标</strong>：用户输入 “我这学期想选 CSC3100 + MAT2040 + PHY1002”，系统输出：</p>
+<ul>
+<li>总学分：12</li>
+<li>预估 workload：高（3 门理论课）</li>
+<li>冲突检测：CSC3100 L01 和 MAT2040 L02 时间重叠</li>
+<li>建议：将 PHY1002 移至下学期，换成 GE 课程</li>
+</ul>
+<p><strong>技术方案</strong>：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">analyze_semester_load</span>(<span class="params">courses: <span class="type">List</span>[<span class="built_in">str</span>], user_profile: <span class="built_in">dict</span></span>):</span><br><span class="line">    <span class="comment"># 1. 提取时间表</span></span><br><span class="line">    schedule = build_schedule_matrix(courses)</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 2. 检测冲突</span></span><br><span class="line">    conflicts = detect_time_conflicts(schedule)</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 3. 预估 workload（基于历史数据）</span></span><br><span class="line">    workload = estimate_workload(courses, user_profile[<span class="string">&#x27;gpa&#x27;</span>], user_profile[<span class="string">&#x27;major&#x27;</span>])</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 4. 生成建议</span></span><br><span class="line">    <span class="keyword">if</span> workload &gt; THRESHOLD:</span><br><span class="line">        alternatives = suggest_lighter_courses(courses)</span><br><span class="line">    </span><br><span class="line">    <span class="keyword">return</span> &#123;</span><br><span class="line">        <span class="string">&quot;conflicts&quot;</span>: conflicts,</span><br><span class="line">        <span class="string">&quot;workload&quot;</span>: workload,</span><br><span class="line">        <span class="string">&quot;suggestions&quot;</span>: alternatives</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="2-模型升级：Flash-路由-3-0-深度推理"><a href="#2-模型升级：Flash-路由-3-0-深度推理" class="headerlink" title="2. 模型升级：Flash 路由 + 3.0 深度推理"></a>2. 模型升级：Flash 路由 + 3.0 深度推理</h4><figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">AdaptiveRouter</span>:</span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">route</span>(<span class="params">self, query: <span class="built_in">str</span>, complexity: <span class="built_in">int</span></span>):</span><br><span class="line">        <span class="keyword">if</span> complexity &lt; <span class="number">3</span>:  <span class="comment"># 简单查询（课程时间、学分）</span></span><br><span class="line">            <span class="keyword">return</span> <span class="variable language_">self</span>.gemini_flash.generate(query)</span><br><span class="line">        <span class="keyword">else</span>:  <span class="comment"># 复杂查询（学期规划、多课程对比）</span></span><br><span class="line">            <span class="keyword">return</span> <span class="variable language_">self</span>.gemini_3_pro.generate(query)</span><br><span class="line">    </span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">estimate_complexity</span>(<span class="params">self, query: <span class="built_in">str</span></span>) -&gt; <span class="built_in">int</span>:</span><br><span class="line">        <span class="comment"># 基于规则 + 小型分类模型</span></span><br><span class="line">        <span class="keyword">if</span> <span class="string">&quot;compare&quot;</span> <span class="keyword">in</span> query <span class="keyword">or</span> <span class="string">&quot;plan&quot;</span> <span class="keyword">in</span> query:</span><br><span class="line">            <span class="keyword">return</span> <span class="number">5</span></span><br><span class="line">        <span class="keyword">elif</span> <span class="string">&quot;when&quot;</span> <span class="keyword">in</span> query <span class="keyword">or</span> <span class="string">&quot;who&quot;</span> <span class="keyword">in</span> query:</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span></span><br><span class="line">        <span class="keyword">else</span>:</span><br><span class="line">            <span class="keyword">return</span> <span class="number">3</span></span><br></pre></td></tr></table></figure>
+
+<h4 id="3-数据粒度深化"><a href="#3-数据粒度深化" class="headerlink" title="3. 数据粒度深化"></a>3. 数据粒度深化</h4><ul>
+<li><strong>课程大纲爬取</strong>：从教授个人页面抓取 syllabus PDF（需 opt-in）</li>
+<li><strong>历史成绩分布</strong>：如果学校公开，整合 GPA 分布数据（隐私合规）</li>
+<li><strong>前置知识图谱</strong>：构建课程依赖关系（CSC1001 → CSC3100 → CSC3170）</li>
+</ul>
+<hr>
+<h2 id="🎓-Reflections-for-Admissions：What-I-Learned-as-a-Freshman"><a href="#🎓-Reflections-for-Admissions：What-I-Learned-as-a-Freshman" class="headerlink" title="🎓 Reflections for Admissions：What I Learned as a Freshman"></a>🎓 Reflections for Admissions：What I Learned as a Freshman</h2><h3 id="Technical-Growth"><a href="#Technical-Growth" class="headerlink" title="Technical Growth"></a>Technical Growth</h3><p><strong>Before this project</strong>: </p>
+<ul>
+<li>认为 RAG &#x3D; “把文档扔进 vector DB”</li>
+<li>不理解 context window 限制的实际影响</li>
+<li>从未在生产环境处理过反爬</li>
+</ul>
+<p><strong>After</strong>:</p>
+<ul>
+<li>理解 Hybrid retrieval 在结构化数据场景下的优势</li>
+<li>学会了 trade-off thinking（Flash vs. 3.0 的决策过程）</li>
+<li>掌握了 Playwright 的 session 管理、Windows multiprocessing 的 pickling 限制</li>
+</ul>
+<h3 id="Soft-Skills"><a href="#Soft-Skills" class="headerlink" title="Soft Skills"></a>Soft Skills</h3><p><strong>Iteration over Perfection</strong>:<br>v0 的目标不是”完美系统”，而是”最小可用 MVP”。我本可以花 1 个月做 Course Catalog 爬虫，但选择先用 3 学期数据验证需求。</p>
+<p><strong>User Empathy</strong>:<br>测试时发现，学生更在乎”这学期开不开”（时效性），而非”这门课历史上开过几次”（完整性）。这影响了我对数据优先级的判断。</p>
+<p><strong>Documentation</strong>:<br>写这篇 case study 的过程中，我意识到很多”显而易见”的设计决策（如为什么选 Flask 而非 FastAPI），其实背后都有 trade-off。记录这些思考让我更清晰自己的技术判断力。</p>
+<hr>
+<h2 id="🔗-Appendix：技术栈与代码示例"><a href="#🔗-Appendix：技术栈与代码示例" class="headerlink" title="🔗 Appendix：技术栈与代码示例"></a>🔗 Appendix：技术栈与代码示例</h2><h3 id="Technology-Stack"><a href="#Technology-Stack" class="headerlink" title="Technology Stack"></a>Technology Stack</h3><table>
+<thead>
+<tr>
+<th>层级</th>
+<th>技术选型</th>
+<th>版本</th>
+<th>选择理由</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Frontend</strong></td>
+<td>Vanilla JS + Tailwind CSS</td>
+<td>-</td>
+<td>轻量级，无构建步骤</td>
+</tr>
+<tr>
+<td><strong>Backend</strong></td>
+<td>Flask</td>
+<td>3.0</td>
+<td>简单 REST API，Python 生态友好</td>
+</tr>
+<tr>
+<td><strong>LLM</strong></td>
+<td>Gemini 2.5 Flash</td>
+<td>-</td>
+<td>成本低，响应快</td>
+</tr>
+<tr>
+<td><strong>Crawler</strong></td>
+<td>Playwright</td>
+<td>1.40</td>
+<td>支持 headless，比 Selenium 轻量</td>
+</tr>
+<tr>
+<td><strong>Data Processing</strong></td>
+<td>PyPDF2 + regex</td>
+<td>-</td>
+<td>PDF 为文本格式，无需 OCR</td>
+</tr>
+<tr>
+<td><strong>Knowledge Base</strong></td>
+<td>JSON files (local)</td>
+<td>-</td>
+<td>&lt;2K 文档，无需数据库</td>
+</tr>
+</tbody></table>
+<h3 id="核心代码片段"><a href="#核心代码片段" class="headerlink" title="核心代码片段"></a>核心代码片段</h3><h4 id="1-Hybrid-Context-组装"><a href="#1-Hybrid-Context-组装" class="headerlink" title="1. Hybrid Context 组装"></a>1. Hybrid Context 组装</h4><figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">build_hybrid_context</span>(<span class="params">course_code: <span class="built_in">str</span>, user_query: <span class="built_in">str</span></span>) -&gt; <span class="built_in">str</span>:</span><br><span class="line">    <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    组装结构化上下文，供 Gemini 生成回答</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    Args:</span></span><br><span class="line"><span class="string">        course_code: 课程代号（如 CSC1001）</span></span><br><span class="line"><span class="string">        user_query: 用户原始问题</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    Returns:</span></span><br><span class="line"><span class="string">        结构化 prompt 字符串</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    <span class="comment"># 1. 加载课程元数据（来自培养方案）</span></span><br><span class="line">    meta = load_course_meta(course_code)</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 2. 聚合多学期 SIS 数据</span></span><br><span class="line">    terms_data = []</span><br><span class="line">    <span class="keyword">for</span> term <span class="keyword">in</span> [<span class="string">&quot;2510&quot;</span>, <span class="string">&quot;2520&quot;</span>, <span class="string">&quot;2650&quot;</span>]:</span><br><span class="line">        path = <span class="string">f&quot;courses/<span class="subst">&#123;course_code&#125;</span>/terms/<span class="subst">&#123;term&#125;</span>/metadata.json&quot;</span></span><br><span class="line">        <span class="keyword">if</span> os.path.exists(path):</span><br><span class="line">            terms_data.append(load_json(path))</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 3. 结构化 prompt</span></span><br><span class="line">    context = <span class="string">f&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    === Official Course Information ===</span></span><br><span class="line"><span class="string">    Course Code: <span class="subst">&#123;course_code&#125;</span></span></span><br><span class="line"><span class="string">    Course Name: <span class="subst">&#123;meta.get(<span class="string">&#x27;name&#x27;</span>, <span class="string">&#x27;N/A&#x27;</span>)&#125;</span></span></span><br><span class="line"><span class="string">    Description: <span class="subst">&#123;meta.get(<span class="string">&#x27;description&#x27;</span>, <span class="string">&#x27;No description available&#x27;</span>)&#125;</span></span></span><br><span class="line"><span class="string">    Prerequisites: <span class="subst">&#123;meta.get(<span class="string">&#x27;prerequisites&#x27;</span>, <span class="string">&#x27;None&#x27;</span>)&#125;</span></span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === Offering History (Recent 3 Semesters) ===</span></span><br><span class="line"><span class="string">    <span class="subst">&#123;format_terms_summary(terms_data)&#125;</span></span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === User Query ===</span></span><br><span class="line"><span class="string">    <span class="subst">&#123;user_query&#125;</span></span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === Instructions ===</span></span><br><span class="line"><span class="string">    - Answer based ONLY on the data above</span></span><br><span class="line"><span class="string">    - If information is missing, explicitly state &quot;官方数据未提供&quot;</span></span><br><span class="line"><span class="string">    - Cite specific terms (e.g., &quot;根据 2025-26 第一学期 SIS 数据...&quot;)</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    <span class="keyword">return</span> context</span><br></pre></td></tr></table></figure>
+
+<h4 id="2-Gemini-API-调用（带超时保护）"><a href="#2-Gemini-API-调用（带超时保护）" class="headerlink" title="2. Gemini API 调用（带超时保护）"></a>2. Gemini API 调用（带超时保护）</h4><figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> multiprocessing <span class="keyword">as</span> mp</span><br><span class="line"><span class="keyword">from</span> multiprocessing <span class="keyword">import</span> Pipe</span><br><span class="line"></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">call_gemini_with_timeout</span>(<span class="params">prompt: <span class="built_in">str</span>, timeout: <span class="built_in">float</span> = <span class="number">45.0</span></span>) -&gt; <span class="built_in">str</span>:</span><br><span class="line">    <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    使用 multiprocessing 实现硬超时（避免 Gemini API 挂起）</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    Args:</span></span><br><span class="line"><span class="string">        prompt: 输入 prompt</span></span><br><span class="line"><span class="string">        timeout: 超时时间（秒）</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    Returns:</span></span><br><span class="line"><span class="string">        模型响应文本</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    Raises:</span></span><br><span class="line"><span class="string">        TimeoutError: 超过 timeout 仍未返回</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    parent_conn, child_conn = Pipe()</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># Windows 要求 target 是顶层函数（不能是 lambda）</span></span><br><span class="line">    process = mp.Process(</span><br><span class="line">        target=_mp_runner,</span><br><span class="line">        args=(prompt, child_conn)</span><br><span class="line">    )</span><br><span class="line">    </span><br><span class="line">    process.start()</span><br><span class="line">    process.join(timeout=timeout)</span><br><span class="line">    </span><br><span class="line">    <span class="keyword">if</span> process.is_alive():</span><br><span class="line">        process.terminate()</span><br><span class="line">        process.join()</span><br><span class="line">        <span class="keyword">raise</span> TimeoutError(<span class="string">f&quot;Gemini call timeout after <span class="subst">&#123;timeout&#125;</span>s&quot;</span>)</span><br><span class="line">    </span><br><span class="line">    <span class="keyword">return</span> parent_conn.recv()</span><br><span class="line"></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">_mp_runner</span>(<span class="params">prompt: <span class="built_in">str</span>, pipe</span>):</span><br><span class="line">    <span class="string">&quot;&quot;&quot;顶层函数，用于 Windows multiprocessing&quot;&quot;&quot;</span></span><br><span class="line">    model = genai.GenerativeModel(<span class="string">&quot;gemini-2.5-flash&quot;</span>)</span><br><span class="line">    response = model.generate_content(prompt)</span><br><span class="line">    pipe.send(response.text)</span><br></pre></td></tr></table></figure>
+
+<hr>
+<h2 id="📚-References-Further-Reading"><a href="#📚-References-Further-Reading" class="headerlink" title="📚 References &amp; Further Reading"></a>📚 References &amp; Further Reading</h2><ol>
+<li><p><strong>RAG Systems</strong>:</p>
+<ul>
+<li>Lewis et al. (2020). “<a target="_blank" rel="noopener" href="https://arxiv.org/abs/2005.11401">Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks</a>“. NeurIPS 2020.</li>
+</ul>
+</li>
+<li><p><strong>Hybrid Retrieval</strong>:</p>
+<ul>
+<li>Ma et al. (2023). “<a target="_blank" rel="noopener" href="https://arxiv.org/abs/2310.08319">Fine-Tuning LLaMA for Multi-Stage Text Retrieval</a>“. arXiv preprint.</li>
+</ul>
+</li>
+<li><p><strong>Context Window Management</strong>:</p>
+<ul>
+<li>OpenAI (2023). “<a target="_blank" rel="noopener" href="https://platform.openai.com/docs/guides/prompt-engineering">Best Practices for Prompt Engineering</a>“.</li>
+</ul>
+</li>
+<li><p><strong>Anti-Scraping Strategies</strong>:</p>
+<ul>
+<li>Imperva (2022). “<a target="_blank" rel="noopener" href="https://www.imperva.com/learn/application-security/bot-management/">Bot Management Best Practices</a>“.</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2 id="🏆-Key-Takeaways（3-句”金句”）"><a href="#🏆-Key-Takeaways（3-句”金句”）" class="headerlink" title="🏆 Key Takeaways（3 句”金句”）"></a>🏆 Key Takeaways（3 句”金句”）</h2><ol>
+<li><p><strong>“数据架构决定系统上限，模型只是逼近上限的工具”</strong><br>在 RAG 系统中，clean + structured data 比选 GPT-4 还是 Gemini 更重要。</p>
+</li>
+<li><p><strong>“显式的错误处理比隐式的’聪明’更可靠”</strong><br>让 LLM 承认”我不知道”（<code>[NORESULT]</code>）比让它”瞎编”更符合工程实践。</p>
+</li>
+<li><p><strong>“MVP 不是偷懒，而是快速验证假设的策略”</strong><br>与其花 3 个月做”完美”的 Course Catalog 爬虫，不如用 2 周验证”学生真的需要这个功能吗”。</p>
+</li>
+</ol>
+<hr>
+<h2 id="📚-v2-前的技术深化学习"><a href="#📚-v2-前的技术深化学习" class="headerlink" title="📚 v2 前的技术深化学习"></a>📚 v2 前的技术深化学习</h2><p>在从 MVP 到 v2 的迭代过程中（11月底至12月中旬），我深化学习了以下技术：</p>
+<h3 id="数据采集与处理"><a href="#数据采集与处理" class="headerlink" title="数据采集与处理"></a>数据采集与处理</h3><ul>
+<li><strong>Playwright</strong>：从官方文档学习浏览器自动化、会话管理、反爬策略应对</li>
+<li><strong>Gemini Vision API</strong>：学习如何用 AI 处理 PDF&#x2F;图像，理解 OCR + 结构化理解的优势</li>
+<li><strong>正则表达式 + AI 混合</strong>：研究如何结合规则和 AI，平衡准确率与成本</li>
+</ul>
+<h3 id="系统工程"><a href="#系统工程" class="headerlink" title="系统工程"></a>系统工程</h3><ul>
+<li><strong>Windows multiprocessing</strong>：学习 Python 在 Windows 上的进程间通信（Pipe&#x2F;Queue）、pickling 机制</li>
+<li><strong>错误处理与重试</strong>：研究 exponential backoff、circuit breaker 等容错模式</li>
+<li><strong>数据结构设计</strong>：学习如何设计可扩展的 JSON schema（按课程&#x2F;学期分片）</li>
+</ul>
+<h3 id="RAG-优化"><a href="#RAG-优化" class="headerlink" title="RAG 优化"></a>RAG 优化</h3><ul>
+<li><strong>Context Window 管理</strong>：研究如何动态加载上下文（intent-based lazy loading）</li>
+<li><strong>Hybrid Retrieval</strong>：学习精确匹配（课程代号）+ 语义搜索（描述）的混合策略</li>
+</ul>
+<hr>
+<h2 id="🙏-致谢"><a href="#🙏-致谢" class="headerlink" title="🙏 致谢"></a>🙏 致谢</h2><ul>
+<li><strong>严明教授</strong>和<strong>贾建民教授</strong>：在项目关键节点提供了深度的技术指导和产品建议，特别是关于”数据质量优先于模型能力”和”显式错误处理”的工程哲学，对系统设计产生了深远影响</li>
+<li><strong>团队成员</strong>：感谢几位同组成员在初期帮助采集培养方案 PDF、整理课程清单、协助内测等基础工作，为后续开发和优化提供了坚实的数据基础和用户反馈</li>
+</ul>
+<hr>
+<p><em>GitHub Repo (Private): <a target="_blank" rel="noopener" href="https://github.com/Jerry0310no1/holistic-assistant">holistic-assistant</a></em><br><em>Contact: <a href="mailto:&#x31;&#50;&#53;&#48;&#57;&#x30;&#52;&#x34;&#x35;&#64;&#108;&#105;&#110;&#x6b;&#x2e;&#x63;&#117;&#x68;&#107;&#46;&#101;&#100;&#117;&#x2e;&#99;&#x6e;">125090445@link.cuhk.edu.cn</a></em></p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2025/12/24/holistic-assistant-case-study/" data-id="cuidiZl-s_CGi8rWTeQzZnwnU" data-title="Holistic Assistant: 一个面向 1500+ 学生的 RAG 学术顾问系统 — 从信息碎片化到结构化决策" class="article-share-link"><span class="fa fa-share">Share</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Flask/" rel="tag">Flask</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Gemini/" rel="tag">Gemini</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Information-Retrieval/" rel="tag">Information Retrieval</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/LLM/" rel="tag">LLM</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Playwright/" rel="tag">Playwright</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RAG/" rel="tag">RAG</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/System-Design/" rel="tag">System Design</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+  
+    <a href="/2025/11/20/holistic-assistant-mvp/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">全人助手 MVP：从&#34;培养方案 PDF&#34;到 AI 驱动的学业规划（可行性验证）</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Categories</h3>
+    <div class="widget">
+      <ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/Diary/">Diary</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Projects/">Projects</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Technical-Case-Study/">Technical Case Study</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/CUHK-SZ/" rel="tag">CUHK-SZ</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Flask/" rel="tag">Flask</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Gemini/" rel="tag">Gemini</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Holistic-Assistant/" rel="tag">Holistic Assistant</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Information-Retrieval/" rel="tag">Information Retrieval</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/LLM/" rel="tag">LLM</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/MVP/" rel="tag">MVP</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Playwright/" rel="tag">Playwright</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Prototype/" rel="tag">Prototype</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/RAG/" rel="tag">RAG</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/System-Design/" rel="tag">System Design</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/CUHK-SZ/" style="font-size: 10px;">CUHK-SZ</a> <a href="/tags/Flask/" style="font-size: 20px;">Flask</a> <a href="/tags/Gemini/" style="font-size: 20px;">Gemini</a> <a href="/tags/Holistic-Assistant/" style="font-size: 20px;">Holistic Assistant</a> <a href="/tags/Information-Retrieval/" style="font-size: 10px;">Information Retrieval</a> <a href="/tags/LLM/" style="font-size: 10px;">LLM</a> <a href="/tags/MVP/" style="font-size: 10px;">MVP</a> <a href="/tags/Playwright/" style="font-size: 10px;">Playwright</a> <a href="/tags/Prototype/" style="font-size: 10px;">Prototype</a> <a href="/tags/RAG/" style="font-size: 10px;">RAG</a> <a href="/tags/System-Design/" style="font-size: 10px;">System Design</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2025/12/">December 2025</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2025/11/">November 2025</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2025/10/">October 2025</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2025/12/24/holistic-assistant-case-study/">Holistic Assistant: 一个面向 1500+ 学生的 RAG 学术顾问系统 — 从信息碎片化到结构化决策</a>
+          </li>
+        
+          <li>
+            <a href="/2025/11/20/holistic-assistant-mvp/">全人助手 MVP：从&#34;培养方案 PDF&#34;到 AI 驱动的学业规划（可行性验证）</a>
+          </li>
+        
+          <li>
+            <a href="/2025/10/02/hello-world/">第一次注册：全人助手已经在路上</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      
+      &copy; 2025 JiaRUI Lou<br>
+      Powered by <a href="https://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+
+<script src="/js/jquery-3.6.4.min.js"></script>
+
+
+
+  
+<script src="/fancybox/jquery.fancybox.min.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+
+  </div>
+</body>
+</html>
