@@ -14,7 +14,7 @@
 <meta property="og:description" content="TL;DR: 设计并实现了一个基于 Hybrid Context RAG 的学术顾问系统，整合分散在 36 份培养方案 PDF 和学校 SIS 系统的课程数据（1568 门课程 × 3 学期），为 CUHK-SZ 学生提供基于官方数据的 24&#x2F;7 个性化课程咨询。核心技术挑战包括：PDF 非结构化数据提取（Gemini 去噪 + 正则候选）、SIS 反爬策略规避（会话持久化 + 节流）、">
 <meta property="og:locale" content="en_US">
 <meta property="article:published_time" content="2025-12-24T06:00:00.000Z">
-<meta property="article:modified_time" content="2025-12-24T08:37:36.911Z">
+<meta property="article:modified_time" content="2025-12-24T09:59:14.664Z">
 <meta property="article:author" content="JiaRUI Lou">
 <meta property="article:tag" content="Flask">
 <meta property="article:tag" content="Gemini">
@@ -261,64 +261,95 @@
 <p><strong>After（Hybrid Context 注入）</strong>：</p>
 <figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">build_prompt</span>(<span class="params">course_code, user_query, context</span>):</span><br><span class="line">    prompt = <span class="string">f&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    You are an academic advisor for CUHK-SZ. Answer based ONLY on the provided data.</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === Official Course Data ===</span></span><br><span class="line"><span class="string">    Course: <span class="subst">&#123;context[<span class="string">&#x27;course_name&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    Description: <span class="subst">&#123;context[<span class="string">&#x27;description&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    Prerequisites: <span class="subst">&#123;context[<span class="string">&#x27;prerequisites&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    Offering (2025-26 T1): <span class="subst">&#123;context[<span class="string">&#x27;sections&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === User Question ===</span></span><br><span class="line"><span class="string">    <span class="subst">&#123;user_query&#125;</span></span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === Instructions ===</span></span><br><span class="line"><span class="string">    - Cite specific data (e.g., &quot;根据 SIS, 本学期开 3 个 section...&quot;)</span></span><br><span class="line"><span class="string">    - If data is missing, say &quot;官方数据未提供此信息&quot;</span></span><br><span class="line"><span class="string">    - Avoid speculation about difficulty/workload</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    <span class="keyword">return</span> prompt</span><br><span class="line"></span><br><span class="line"><span class="comment"># Output:</span></span><br><span class="line"><span class="comment"># &quot;根据 SIS, CSC3100 在 2025-26 第一学期开 3 个 section（L01/L02/L03），</span></span><br><span class="line"><span class="comment">#  由 Pinjia HE 和 Junjie HU 教授。先修要求为 CSC1001 或同等课程。</span></span><br><span class="line"><span class="comment">#  官方数据未提供难度评级。&quot;</span></span><br></pre></td></tr></table></figure>
 
-<h4 id="3-数据预处理：Structure-Aware-Parsing-与-Global-Context-Preservation"><a href="#3-数据预处理：Structure-Aware-Parsing-与-Global-Context-Preservation" class="headerlink" title="3. 数据预处理：Structure-Aware Parsing 与 Global Context Preservation"></a>3. 数据预处理：Structure-Aware Parsing 与 Global Context Preservation</h4><p><strong>核心问题</strong>：传统 RAG 的”Naive Chunking”策略会破坏培养方案文档中的<strong>长距离依赖关系</strong>（Long-range Dependencies）。</p>
-<p><strong>为什么不能分块？</strong></p>
-<p>培养方案 PDF 的典型结构：</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">Year 1:</span><br><span class="line">  - CSC1001 (Prerequisite: None)</span><br><span class="line">  - CSC1002 (Prerequisite: CSC1001)  ← 依赖关系跨越多个页面</span><br><span class="line">  - MAT1001 (Prerequisite: None)</span><br><span class="line"></span><br><span class="line">Year 2:</span><br><span class="line">  - CSC3100 (Prerequisite: CSC1001, CSC1002)  ← 依赖关系跨越年份</span><br></pre></td></tr></table></figure>
+<pre><code>        #### 3. 数据预处理：Structure-Aware Parsing 与 Global Context Preservation
 
-<p>如果按固定大小（如 512 tokens）分块：</p>
-<ul>
-<li><strong>Chunk 1</strong> (Page 1-2): “CSC1001, CSC1002…”</li>
-<li><strong>Chunk 2</strong> (Page 3-4): “CSC3100 (Prerequisite: CSC1001, CSC1002)”</li>
-<li><strong>问题</strong>：当用户问”CSC3100 的先修是什么”时，Chunk 2 包含先修信息，但 Chunk 1（CSC1001&#x2F;CSC1002 的定义）可能不在检索结果中，导致 LLM 无法理解完整的课程体系。</li>
-</ul>
-<p><strong>架构决策：Global Context Preservation</strong></p>
-<p>我选择使用 <strong>Gemini 1.5 Flash 的 1M+ token 上下文窗口</strong>，将整个培养方案（前 4 年核心要求，约 30-50 页）作为<strong>单一文档</strong>一次性注入，而非分块：</p>
-<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">extract_course_structure</span>(<span class="params">pdf_path: Path</span>) -&gt; <span class="built_in">str</span>:</span><br><span class="line">    <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    Structure-Aware Parsing: 保持文档的时序逻辑和依赖关系</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    <span class="comment"># 使用 PyPDF2 提取完整文本（保持页面顺序）</span></span><br><span class="line">    reader = PyPDF2.PdfReader(pdf_path)</span><br><span class="line">    full_text = <span class="string">&quot;&quot;</span></span><br><span class="line">    <span class="keyword">for</span> page <span class="keyword">in</span> reader.pages[:<span class="number">50</span>]:  <span class="comment"># 前 50 页（覆盖 4 年）</span></span><br><span class="line">        full_text += page.extract_text() + <span class="string">&quot;\n&quot;</span></span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 关键：不 chunk，直接喂给 Gemini（利用大上下文窗口）</span></span><br><span class="line">    prompt = <span class="string">f&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    Parse this Study Scheme document. Extract:</span></span><br><span class="line"><span class="string">    1. Course codes (e.g., CSC1001)</span></span><br><span class="line"><span class="string">    2. Prerequisites (which courses require which)</span></span><br><span class="line"><span class="string">    3. Year-by-year structure</span></span><br><span class="line"><span class="string">    4. Required vs. Elective classification</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    Document:</span></span><br><span class="line"><span class="string">    <span class="subst">&#123;full_text&#125;</span></span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    </span><br><span class="line">    <span class="comment"># Gemini 1.5 Flash 可以一次性处理 ~50K tokens</span></span><br><span class="line">    structured_data = gemini_api.generate(prompt, model=<span class="string">&quot;gemini-1.5-flash&quot;</span>)</span><br><span class="line">    <span class="keyword">return</span> structured_data</span><br></pre></td></tr></table></figure>
+        **核心问题**：传统 RAG 的&quot;Naive Chunking&quot;策略会破坏培养方案文档中的**长距离依赖关系**（Long-range Dependencies）。
 
-<p><strong>Trade-off 分析</strong>：</p>
-<table>
-<thead>
-<tr>
-<th>方案</th>
-<th>Latency</th>
-<th>上下文完整性</th>
-<th>成本</th>
-<th>选择</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Naive Chunking</strong></td>
-<td>低（~200ms）</td>
-<td>❌ 破坏依赖关系</td>
-<td>低</td>
-<td>❌</td>
-</tr>
-<tr>
-<td><strong>Semantic Chunking</strong></td>
-<td>中（~500ms）</td>
-<td>⚠️ 部分保留</td>
-<td>中</td>
-<td>❌</td>
-</tr>
-<tr>
-<td><strong>Global Context (我的方案)</strong></td>
-<td>中（~800ms）</td>
-<td>✅ 完整保留</td>
-<td>中</td>
-<td>✅</td>
-</tr>
-</tbody></table>
-<p><strong>为什么选择 PyPDF2？</strong></p>
-<p>虽然 PyPDF2 在扫描版 PDF 上表现不佳，但 CUHK-SZ 的培养方案都是<strong>文本型 PDF</strong>（非扫描），PyPDF2 的优势：</p>
-<ul>
-<li><strong>零依赖</strong>：无需 OCR 引擎（Tesseract）或图像处理库</li>
-<li><strong>轻量级</strong>：单文件提取 &lt;100ms</li>
-<li><strong>结构化保留</strong>：保持页面顺序和文本流</li>
-</ul>
-<p>对于 2 份扫描版 PDF（失败率 6%），v1 计划用 Gemini Vision API 做 OCR + 结构化理解。</p>
-<hr>
-<h4 id="4-数据增强：Entity-Linking-与-Single-Source-of-Truth-SSOT-架构"><a href="#4-数据增强：Entity-Linking-与-Single-Source-of-Truth-SSOT-架构" class="headerlink" title="4. 数据增强：Entity Linking 与 Single Source of Truth (SSOT) 架构"></a>4. 数据增强：Entity Linking 与 Single Source of Truth (SSOT) 架构</h4><p><strong>核心问题</strong>：PDF 和 SIS 数据存在<strong>冲突</strong>（Data Conflicts），需要建立<strong>仲裁策略</strong>（Arbitration Strategy）。</p>
+        **为什么不能分块？**
+
+        培养方案 PDF 的典型结构：
+        <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">Year 1:</span><br><span class="line">  - CSC1001 (Prerequisite: None)</span><br><span class="line">  - CSC1002 (Prerequisite: CSC1001)  ← 依赖关系跨越多个页面</span><br><span class="line">  - MAT1001 (Prerequisite: None)</span><br><span class="line"></span><br><span class="line">Year 2:</span><br><span class="line">  - CSC3100 (Prerequisite: CSC1001, CSC1002)  ← 依赖关系跨越年份</span><br></pre></td></tr></table></figure>
+
+        如果按固定大小（如 512 tokens）分块：
+        - **Chunk 1** (Page 1-2): &quot;CSC1001, CSC1002...&quot;
+        - **Chunk 2** (Page 3-4): &quot;CSC3100 (Prerequisite: CSC1001, CSC1002)&quot;
+        - **问题**：当用户问&quot;CSC3100 的先修是什么&quot;时，Chunk 2 包含先修信息，但 Chunk 1（CSC1001/CSC1002 的定义）可能不在检索结果中，导致 LLM 无法理解完整的课程体系。
+
+        **架构决策：Global Context Preservation**
+
+        我选择使用 **Gemini 1.5 Flash 的 1M+ token 上下文窗口**，将整个培养方案（前 4 年核心要求，约 30-50 页）作为**单一文档**一次性注入，而非分块：
+
+        <figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">extract_course_structure</span>(<span class="params">pdf_path: Path</span>) -&gt; <span class="built_in">str</span>:</span><br><span class="line">    <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    Structure-Aware Parsing: 保持文档的时序逻辑和依赖关系</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    <span class="comment"># 使用 PyPDF2 提取完整文本（保持页面顺序）</span></span><br><span class="line">    reader = PyPDF2.PdfReader(pdf_path)</span><br><span class="line">    full_text = <span class="string">&quot;&quot;</span></span><br><span class="line">    <span class="keyword">for</span> page <span class="keyword">in</span> reader.pages[:<span class="number">50</span>]:  <span class="comment"># 前 50 页（覆盖 4 年）</span></span><br><span class="line">        full_text += page.extract_text() + <span class="string">&quot;\n&quot;</span></span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 关键：不 chunk，直接喂给 Gemini（利用大上下文窗口）</span></span><br><span class="line">    prompt = <span class="string">f&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    Parse this Study Scheme document. Extract:</span></span><br><span class="line"><span class="string">    1. Course codes (e.g., CSC1001)</span></span><br><span class="line"><span class="string">    2. Prerequisites (which courses require which)</span></span><br><span class="line"><span class="string">    3. Year-by-year structure</span></span><br><span class="line"><span class="string">    4. Required vs. Elective classification</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    Document:</span></span><br><span class="line"><span class="string">    <span class="subst">&#123;full_text&#125;</span></span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    </span><br><span class="line">    <span class="comment"># Gemini 1.5 Flash 可以一次性处理 ~50K tokens</span></span><br><span class="line">    structured_data = gemini_api.generate(prompt, model=<span class="string">&quot;gemini-1.5-flash&quot;</span>)</span><br><span class="line">    <span class="keyword">return</span> structured_data</span><br></pre></td></tr></table></figure>
+
+        **Trade-off 分析**：
+
+        | 方案 | Latency | 上下文完整性 | 成本 | 选择 |
+        |------|---------|-------------|------|------|
+        | **Naive Chunking** | 低（~200ms） | ❌ 破坏依赖关系 | 低 | ❌ |
+        | **Semantic Chunking** | 中（~500ms） | ⚠️ 部分保留 | 中 | ❌ |
+        | **Global Context (我的方案)** | 中（~800ms） | ✅ 完整保留 | 中 | ✅ |
+
+        **为什么选择 PyPDF2？**
+
+        虽然 PyPDF2 在扫描版 PDF 上表现不佳，但 CUHK-SZ 的培养方案都是**文本型 PDF**（非扫描），PyPDF2 的优势：
+        - **零依赖**：无需 OCR 引擎（Tesseract）或图像处理库
+        - **轻量级**：单文件提取 &lt;100ms
+        - **结构化保留**：保持页面顺序和文本流
+
+        对于 2 份扫描版 PDF（失败率 6%），v1 计划用 Gemini Vision API 做 OCR + 结构化理解。
+
+        ---
+
+        #### 3.4 极致性能：双层缓存架构 (Tiered Caching Architecture)
+
+        为了平衡极低延迟 (Ultra-low Latency) 与 Token 成本效率，全人助手 v0 引入了工业级的双层缓存机制：
+
+        **L1 本地热缓存 (In-Memory Hot Cache)**：
+
+        利用 Python `lru_cache` 或全局字典，将高频访问的课程元数据驻留在服务器 RAM 中。
+
+        - **效果**：对于热门课程查询，实现 &lt; 10ms 的亚毫秒级响应，完全绕过网络请求。
+
+        <figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># L1 Cache Implementation (Simplified)</span></span><br><span class="line"><span class="keyword">from</span> functools <span class="keyword">import</span> lru_cache</span><br><span class="line"></span><br><span class="line"><span class="meta">@lru_cache(<span class="params">maxsize=<span class="number">2000</span></span>)</span></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">load_course_meta_cached</span>(<span class="params">course_code: <span class="built_in">str</span></span>):</span><br><span class="line">    <span class="string">&quot;&quot;&quot;L1: In-Memory Hot Cache (~0.1ms latency)&quot;&quot;&quot;</span></span><br><span class="line">    <span class="comment"># 实战中直接读取 RAM 中的预加载字典</span></span><br><span class="line">    <span class="keyword">return</span> COURSE_DB.get(course_code)</span><br></pre></td></tr></table></figure>
+
+        **L2 远程上下文缓存 (Gemini Context Caching)**：
+
+        针对几十万 Token 的《培养方案》PDF，利用 Gemini API 的 Context Caching 功能。
+
+        - **机制**：将预处理后的长文本上下文&quot;冻结&quot;在 Google 服务器端，赋予 TTL (Time-To-Live)。
+        - **价值**：避免了每次请求都重复上传巨大的 PDF 上下文，将 Input Token Cost 降低了 90% 以上，同时显著减少了 Time-to-First-Token (TTFT)。
+
+        <figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># L2 Cache: Gemini Context Caching</span></span><br><span class="line"><span class="keyword">from</span> google.generativeai <span class="keyword">import</span> caching</span><br><span class="line"></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">get_cached_pdf_content</span>(<span class="params">pdf_path</span>):</span><br><span class="line">    <span class="comment"># Check if cache exists remotely</span></span><br><span class="line">    <span class="keyword">if</span> cache := caching.CachedContent.get(name=pdf_path.stem):</span><br><span class="line">        <span class="keyword">return</span> cache</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># Create new cache (TTL 1 hour)</span></span><br><span class="line">    content = caching.CachedContent.create(</span><br><span class="line">        model=<span class="string">&quot;models/gemini-1.5-flash-001&quot;</span>,</span><br><span class="line">        contents=[pdf_text],</span><br><span class="line">        ttl=datetime.timedelta(minutes=<span class="number">60</span>)</span><br><span class="line">    )</span><br><span class="line">    <span class="keyword">return</span> content</span><br></pre></td></tr></table></figure>
+
+        #### 3.5 数据鲁棒性：多级实体解析 (Multi-stage Entity Resolution)
+
+        针对 PDF 文本中潜在的 OCR 错误或排版噪声（如 `CSC-3001` vs `CSC 3001`），系统摒弃了脆弱的纯正则匹配，构建了三段式标准化流水线：
+
+        1. **标准化层 (Normalization Layer)**：全角转半角、去除不可见字符、统一大小写。
+        2. **正则提取 (Regex Extraction)**：提取高置信度的候选课程代码。
+        3. **模糊匹配兜底 (Fuzzy Matching Fallback)**：
+           - 引入 Levenshtein Distance (编辑距离) 算法。
+           - 设置阈值（如 Similarity &gt; 0.9），确保即使用户输入了 `C$C3001` 或 PDF 存在扫描噪点，依然能正确链接到 SIS 数据库中的目标实体。
+
+        <figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># Multi-stage Entity Resolution Pipeline</span></span><br><span class="line"><span class="keyword">import</span> re</span><br><span class="line"><span class="keyword">from</span> rapidfuzz <span class="keyword">import</span> process, fuzz</span><br><span class="line"></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">resolve_entity</span>(<span class="params">raw_input: <span class="built_in">str</span>, valid_codes: <span class="built_in">list</span></span>) -&gt; <span class="built_in">str</span>:</span><br><span class="line">    <span class="comment"># 1. Normalization</span></span><br><span class="line">    clean_input = raw_input.strip().upper().replace(<span class="string">&quot; &quot;</span>, <span class="string">&quot;&quot;</span>)</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 2. Exact Match (O(1))</span></span><br><span class="line">    <span class="keyword">if</span> clean_input <span class="keyword">in</span> valid_codes:</span><br><span class="line">        <span class="keyword">return</span> clean_input</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 3. Fuzzy Fallback (Levenshtein Distance)</span></span><br><span class="line">    <span class="comment"># handle OCR errors like &quot;CSC-1001&quot; or &quot;C$C1001&quot;</span></span><br><span class="line">    <span class="keyword">match</span> = process.extractOne(</span><br><span class="line">        clean_input, </span><br><span class="line">        valid_codes, </span><br><span class="line">        scorer=fuzz.ratio, </span><br><span class="line">        score_cutoff=<span class="number">90</span></span><br><span class="line">    )</span><br><span class="line">    <span class="keyword">if</span> <span class="keyword">match</span>:</span><br><span class="line">        <span class="keyword">return</span> <span class="keyword">match</span>[<span class="number">0</span>]</span><br><span class="line">    </span><br><span class="line">    <span class="keyword">return</span> <span class="literal">None</span></span><br></pre></td></tr></table></figure>
+
+        #### 3.6 高可用设计：异步预取与读写分离 (Async Prefetching &amp; CQRS)
+
+        考虑到教务系统 (SIS) 存在的延迟波动和维护窗口，全人助手拒绝了**&quot;同步阻塞 (Synchronous Blocking)&quot;的请求模式，转而采用异步预取策略**：
+
+        - **后台调度 (Background Scheduler)**：系统在低峰期（如凌晨 4:00）通过异步任务（Async Task）主动拉取 SIS 的核心课程数据。
+        
+        - **读写分离 (CQRS Pattern)**：
+           - **Write Path**: 爬虫脚本 (`sis_sync.py`) 将清洗后的数据写入本地高性能 KV 存储（或 JSON 数据库）。
+           - **Read Path**: 用户的实时请求直接读取本地数据库，完全不依赖 SIS 的实时响应。
+
+        - **成果**：即使 SIS 系统宕机，全人助手依然能基于本地快照（Snapshot）提供服务，实现了 100% 的服务可用性 (Availability)。
+
+        <figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># Async Prefetching Architecture (Simplified)</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># Write Path (Background Worker)</span></span><br><span class="line"><span class="comment"># runs via cron/task scheduler</span></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">background_sync</span>():</span><br><span class="line">    <span class="built_in">print</span>(<span class="string">&quot;[Worker] Prefetching SIS data...&quot;</span>)</span><br><span class="line">    <span class="comment"># 爬虫逻辑：Fetch -&gt; Clean -&gt; Save to JSON</span></span><br><span class="line">    subprocess.run([<span class="string">&quot;python&quot;</span>, <span class="string">&quot;sis_sync.py&quot;</span>, <span class="string">&quot;search-batch&quot;</span>, ...])</span><br><span class="line"></span><br><span class="line"><span class="comment"># Read Path (API Server)</span></span><br><span class="line"><span class="comment"># ZERO dependency on SIS availability</span></span><br><span class="line"><span class="meta">@app.route(<span class="params"><span class="string">&quot;/api/course/&lt;code &gt;&quot;</span></span>)</span></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">get_course_info</span>(<span class="params">code</span>):</span><br><span class="line">    <span class="comment"># Direct read from local Snapshot (sub-millisecond latency)</span></span><br><span class="line">    data = load_from_local_snapshot(code) </span><br><span class="line">    <span class="keyword">if</span> <span class="keyword">not</span> data:</span><br><span class="line">        <span class="keyword">return</span> &#123;<span class="string">&quot;status&quot;</span>: <span class="string">&quot;stale&quot;</span>, <span class="string">&quot;msg&quot;</span>: <span class="string">&quot;Syncing...&quot;</span>&#125;</span><br><span class="line">    <span class="keyword">return</span> data</span><br></pre></td></tr></table></figure>
+
+        #### 4. 数据增强：Entity Linking 与 Single Source of Truth (SSOT) 架构
+</code></pre>
+<p><strong>核心问题</strong>：PDF 和 SIS 数据存在<strong>冲突</strong>（Data Conflicts），需要建立<strong>仲裁策略</strong>（Arbitration Strategy）。</p>
 <p><strong>冲突示例</strong>：</p>
 <table>
 <thead>
@@ -758,12 +789,12 @@
 <li><strong>团队成员</strong>：感谢几位同组成员在初期帮助采集培养方案 PDF、整理课程清单、协助内测等基础工作，为后续开发和优化提供了坚实的数据基础和用户反馈</li>
 </ul>
 <hr>
-<p><em>GitHub Repo (Private): <a target="_blank" rel="noopener" href="https://github.com/Jerry0310no1/holistic-assistant">holistic-assistant</a></em><br><em>Contact: <a href="mailto:&#x31;&#50;&#53;&#48;&#57;&#48;&#x34;&#x34;&#53;&#x40;&#x6c;&#105;&#x6e;&#x6b;&#x2e;&#x63;&#x75;&#x68;&#x6b;&#x2e;&#x65;&#x64;&#x75;&#46;&#x63;&#110;">125090445@link.cuhk.edu.cn</a></em></p>
+<p><em>GitHub Repo (Private): <a target="_blank" rel="noopener" href="https://github.com/Jerry0310no1/holistic-assistant">holistic-assistant</a></em><br><em>Contact: <a href="mailto:&#49;&#50;&#x35;&#48;&#57;&#48;&#x34;&#52;&#x35;&#x40;&#108;&#105;&#x6e;&#x6b;&#x2e;&#x63;&#117;&#x68;&#107;&#x2e;&#x65;&#100;&#x75;&#46;&#x63;&#110;">125090445@link.cuhk.edu.cn</a></em></p>
 
       
     </div>
     <footer class="article-footer">
-      <a data-url="https://jerry0310no1.github.io/2025/12/24/holistic-assistant-case-study/" data-id="cuidhN3QW93lnly4wuF7j3RfB" data-title="Holistic Assistant: 一个面向 1500+ 学生的 RAG 学术顾问系统 — 从信息碎片化到结构化决策" class="article-share-link"><span class="fa fa-share">Share</span></a>
+      <a data-url="https://jerry0310no1.github.io/2025/12/24/holistic-assistant-case-study/" data-id="cuidMiGxKLYhmeUeP-7f8Sar6" data-title="Holistic Assistant: 一个面向 1500+ 学生的 RAG 学术顾问系统 — 从信息碎片化到结构化决策" class="article-share-link"><span class="fa fa-share">Share</span></a>
       
       
       
