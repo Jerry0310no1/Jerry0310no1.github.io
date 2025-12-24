@@ -14,7 +14,7 @@
 <meta property="og:description" content="TL;DR: 设计并实现了一个基于 Hybrid Context RAG 的学术顾问系统，整合分散在 36 份培养方案 PDF 和学校 SIS 系统的课程数据（1568 门课程 × 3 学期），为 CUHK-SZ 学生提供基于官方数据的 24&#x2F;7 个性化课程咨询。核心技术挑战包括：PDF 非结构化数据提取（Gemini 去噪 + 正则候选）、SIS 反爬策略规避（会话持久化 + 节流）、">
 <meta property="og:locale" content="en_US">
 <meta property="article:published_time" content="2025-12-24T06:00:00.000Z">
-<meta property="article:modified_time" content="2025-12-23T17:23:59.161Z">
+<meta property="article:modified_time" content="2025-12-24T08:37:36.911Z">
 <meta property="article:author" content="JiaRUI Lou">
 <meta property="article:tag" content="Flask">
 <meta property="article:tag" content="Gemini">
@@ -261,7 +261,219 @@
 <p><strong>After（Hybrid Context 注入）</strong>：</p>
 <figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">build_prompt</span>(<span class="params">course_code, user_query, context</span>):</span><br><span class="line">    prompt = <span class="string">f&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    You are an academic advisor for CUHK-SZ. Answer based ONLY on the provided data.</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === Official Course Data ===</span></span><br><span class="line"><span class="string">    Course: <span class="subst">&#123;context[<span class="string">&#x27;course_name&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    Description: <span class="subst">&#123;context[<span class="string">&#x27;description&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    Prerequisites: <span class="subst">&#123;context[<span class="string">&#x27;prerequisites&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    Offering (2025-26 T1): <span class="subst">&#123;context[<span class="string">&#x27;sections&#x27;</span>]&#125;</span></span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === User Question ===</span></span><br><span class="line"><span class="string">    <span class="subst">&#123;user_query&#125;</span></span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    === Instructions ===</span></span><br><span class="line"><span class="string">    - Cite specific data (e.g., &quot;根据 SIS, 本学期开 3 个 section...&quot;)</span></span><br><span class="line"><span class="string">    - If data is missing, say &quot;官方数据未提供此信息&quot;</span></span><br><span class="line"><span class="string">    - Avoid speculation about difficulty/workload</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    <span class="keyword">return</span> prompt</span><br><span class="line"></span><br><span class="line"><span class="comment"># Output:</span></span><br><span class="line"><span class="comment"># &quot;根据 SIS, CSC3100 在 2025-26 第一学期开 3 个 section（L01/L02/L03），</span></span><br><span class="line"><span class="comment">#  由 Pinjia HE 和 Junjie HU 教授。先修要求为 CSC1001 或同等课程。</span></span><br><span class="line"><span class="comment">#  官方数据未提供难度评级。&quot;</span></span><br></pre></td></tr></table></figure>
 
-<h4 id="3-模型选择：Gemini-2-5-Flash-vs-3-0-的权衡"><a href="#3-模型选择：Gemini-2-5-Flash-vs-3-0-的权衡" class="headerlink" title="3. 模型选择：Gemini 2.5 Flash vs. 3.0 的权衡"></a>3. 模型选择：Gemini 2.5 Flash vs. 3.0 的权衡</h4><table>
+<h4 id="3-数据预处理：Structure-Aware-Parsing-与-Global-Context-Preservation"><a href="#3-数据预处理：Structure-Aware-Parsing-与-Global-Context-Preservation" class="headerlink" title="3. 数据预处理：Structure-Aware Parsing 与 Global Context Preservation"></a>3. 数据预处理：Structure-Aware Parsing 与 Global Context Preservation</h4><p><strong>核心问题</strong>：传统 RAG 的”Naive Chunking”策略会破坏培养方案文档中的<strong>长距离依赖关系</strong>（Long-range Dependencies）。</p>
+<p><strong>为什么不能分块？</strong></p>
+<p>培养方案 PDF 的典型结构：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">Year 1:</span><br><span class="line">  - CSC1001 (Prerequisite: None)</span><br><span class="line">  - CSC1002 (Prerequisite: CSC1001)  ← 依赖关系跨越多个页面</span><br><span class="line">  - MAT1001 (Prerequisite: None)</span><br><span class="line"></span><br><span class="line">Year 2:</span><br><span class="line">  - CSC3100 (Prerequisite: CSC1001, CSC1002)  ← 依赖关系跨越年份</span><br></pre></td></tr></table></figure>
+
+<p>如果按固定大小（如 512 tokens）分块：</p>
+<ul>
+<li><strong>Chunk 1</strong> (Page 1-2): “CSC1001, CSC1002…”</li>
+<li><strong>Chunk 2</strong> (Page 3-4): “CSC3100 (Prerequisite: CSC1001, CSC1002)”</li>
+<li><strong>问题</strong>：当用户问”CSC3100 的先修是什么”时，Chunk 2 包含先修信息，但 Chunk 1（CSC1001&#x2F;CSC1002 的定义）可能不在检索结果中，导致 LLM 无法理解完整的课程体系。</li>
+</ul>
+<p><strong>架构决策：Global Context Preservation</strong></p>
+<p>我选择使用 <strong>Gemini 1.5 Flash 的 1M+ token 上下文窗口</strong>，将整个培养方案（前 4 年核心要求，约 30-50 页）作为<strong>单一文档</strong>一次性注入，而非分块：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">extract_course_structure</span>(<span class="params">pdf_path: Path</span>) -&gt; <span class="built_in">str</span>:</span><br><span class="line">    <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    Structure-Aware Parsing: 保持文档的时序逻辑和依赖关系</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    <span class="comment"># 使用 PyPDF2 提取完整文本（保持页面顺序）</span></span><br><span class="line">    reader = PyPDF2.PdfReader(pdf_path)</span><br><span class="line">    full_text = <span class="string">&quot;&quot;</span></span><br><span class="line">    <span class="keyword">for</span> page <span class="keyword">in</span> reader.pages[:<span class="number">50</span>]:  <span class="comment"># 前 50 页（覆盖 4 年）</span></span><br><span class="line">        full_text += page.extract_text() + <span class="string">&quot;\n&quot;</span></span><br><span class="line">    </span><br><span class="line">    <span class="comment"># 关键：不 chunk，直接喂给 Gemini（利用大上下文窗口）</span></span><br><span class="line">    prompt = <span class="string">f&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    Parse this Study Scheme document. Extract:</span></span><br><span class="line"><span class="string">    1. Course codes (e.g., CSC1001)</span></span><br><span class="line"><span class="string">    2. Prerequisites (which courses require which)</span></span><br><span class="line"><span class="string">    3. Year-by-year structure</span></span><br><span class="line"><span class="string">    4. Required vs. Elective classification</span></span><br><span class="line"><span class="string">    </span></span><br><span class="line"><span class="string">    Document:</span></span><br><span class="line"><span class="string">    <span class="subst">&#123;full_text&#125;</span></span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    </span><br><span class="line">    <span class="comment"># Gemini 1.5 Flash 可以一次性处理 ~50K tokens</span></span><br><span class="line">    structured_data = gemini_api.generate(prompt, model=<span class="string">&quot;gemini-1.5-flash&quot;</span>)</span><br><span class="line">    <span class="keyword">return</span> structured_data</span><br></pre></td></tr></table></figure>
+
+<p><strong>Trade-off 分析</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>Latency</th>
+<th>上下文完整性</th>
+<th>成本</th>
+<th>选择</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Naive Chunking</strong></td>
+<td>低（~200ms）</td>
+<td>❌ 破坏依赖关系</td>
+<td>低</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>Semantic Chunking</strong></td>
+<td>中（~500ms）</td>
+<td>⚠️ 部分保留</td>
+<td>中</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>Global Context (我的方案)</strong></td>
+<td>中（~800ms）</td>
+<td>✅ 完整保留</td>
+<td>中</td>
+<td>✅</td>
+</tr>
+</tbody></table>
+<p><strong>为什么选择 PyPDF2？</strong></p>
+<p>虽然 PyPDF2 在扫描版 PDF 上表现不佳，但 CUHK-SZ 的培养方案都是<strong>文本型 PDF</strong>（非扫描），PyPDF2 的优势：</p>
+<ul>
+<li><strong>零依赖</strong>：无需 OCR 引擎（Tesseract）或图像处理库</li>
+<li><strong>轻量级</strong>：单文件提取 &lt;100ms</li>
+<li><strong>结构化保留</strong>：保持页面顺序和文本流</li>
+</ul>
+<p>对于 2 份扫描版 PDF（失败率 6%），v1 计划用 Gemini Vision API 做 OCR + 结构化理解。</p>
+<hr>
+<h4 id="4-数据增强：Entity-Linking-与-Single-Source-of-Truth-SSOT-架构"><a href="#4-数据增强：Entity-Linking-与-Single-Source-of-Truth-SSOT-架构" class="headerlink" title="4. 数据增强：Entity Linking 与 Single Source of Truth (SSOT) 架构"></a>4. 数据增强：Entity Linking 与 Single Source of Truth (SSOT) 架构</h4><p><strong>核心问题</strong>：PDF 和 SIS 数据存在<strong>冲突</strong>（Data Conflicts），需要建立<strong>仲裁策略</strong>（Arbitration Strategy）。</p>
+<p><strong>冲突示例</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>数据源</th>
+<th>CSC3100 开课时间</th>
+<th>数据时效性</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>PDF（培养方案）</strong></td>
+<td>“Fall Semester”</td>
+<td>静态（2024 年发布）</td>
+</tr>
+<tr>
+<td><strong>SIS（实时数据）</strong></td>
+<td>“2025-26 第一学期：L01 (Mon 10:00), L02 (Tue 14:00)”</td>
+<td>动态（每学期更新）</td>
+</tr>
+</tbody></table>
+<p><strong>架构设计：Entity Linking + Priority Logic</strong></p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">HybridRetrievalEngine</span>:</span><br><span class="line">    <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    Entity Linking: PDF course codes → SIS real-time data</span></span><br><span class="line"><span class="string">    SSOT: SIS 作为权威数据源（当冲突时，SIS 覆盖 PDF）</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    </span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">__init__</span>(<span class="params">self</span>):</span><br><span class="line">        <span class="variable language_">self</span>.pdf_index = &#123;&#125;  <span class="comment"># course_code -&gt; PDF metadata</span></span><br><span class="line">        <span class="variable language_">self</span>.sis_index = &#123;&#125;  <span class="comment"># course_code -&gt; SIS multi-term data</span></span><br><span class="line">    </span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">resolve_course_info</span>(<span class="params">self, course_code: <span class="built_in">str</span>, query_intent: <span class="built_in">str</span></span>) -&gt; <span class="built_in">dict</span>:</span><br><span class="line">        <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">        Arbitration Strategy: 根据查询意图选择数据源优先级</span></span><br><span class="line"><span class="string">        &quot;&quot;&quot;</span></span><br><span class="line">        pdf_data = <span class="variable language_">self</span>.pdf_index.get(course_code, &#123;&#125;)</span><br><span class="line">        sis_data = <span class="variable language_">self</span>.sis_index.get(course_code, &#123;&#125;)</span><br><span class="line">        </span><br><span class="line">        <span class="comment"># SSOT: 对于&quot;开课时间/地点/老师&quot;，SIS 优先</span></span><br><span class="line">        <span class="keyword">if</span> query_intent <span class="keyword">in</span> [<span class="string">&quot;schedule&quot;</span>, <span class="string">&quot;instructor&quot;</span>, <span class="string">&quot;location&quot;</span>]:</span><br><span class="line">            <span class="keyword">if</span> sis_data:</span><br><span class="line">                <span class="keyword">return</span> &#123;</span><br><span class="line">                    <span class="string">&quot;source&quot;</span>: <span class="string">&quot;SIS&quot;</span>,</span><br><span class="line">                    <span class="string">&quot;data&quot;</span>: sis_data,</span><br><span class="line">                    <span class="string">&quot;confidence&quot;</span>: <span class="string">&quot;high&quot;</span>,  <span class="comment"># 实时数据，权威性高</span></span><br><span class="line">                    <span class="string">&quot;fallback&quot;</span>: pdf_data  <span class="comment"># PDF 作为补充（如果 SIS 缺失）</span></span><br><span class="line">                &#125;</span><br><span class="line">        </span><br><span class="line">        <span class="comment"># 对于&quot;课程描述/学分/先修&quot;，PDF 和 SIS 合并（SIS 优先）</span></span><br><span class="line">        <span class="keyword">if</span> query_intent <span class="keyword">in</span> [<span class="string">&quot;description&quot;</span>, <span class="string">&quot;units&quot;</span>, <span class="string">&quot;prerequisites&quot;</span>]:</span><br><span class="line">            merged = &#123;</span><br><span class="line">                **pdf_data,  <span class="comment"># PDF 提供基础信息</span></span><br><span class="line">                **sis_data   <span class="comment"># SIS 覆盖/补充（如果存在）</span></span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">return</span> &#123;</span><br><span class="line">                <span class="string">&quot;source&quot;</span>: <span class="string">&quot;Hybrid&quot;</span>,</span><br><span class="line">                <span class="string">&quot;data&quot;</span>: merged,</span><br><span class="line">                <span class="string">&quot;confidence&quot;</span>: <span class="string">&quot;high&quot;</span> <span class="keyword">if</span> sis_data <span class="keyword">else</span> <span class="string">&quot;medium&quot;</span></span><br><span class="line">            &#125;</span><br><span class="line">        </span><br><span class="line">        <span class="keyword">return</span> &#123;<span class="string">&quot;source&quot;</span>: <span class="string">&quot;PDF&quot;</span>, <span class="string">&quot;data&quot;</span>: pdf_data&#125;</span><br></pre></td></tr></table></figure>
+
+<p><strong>Entity Linking 实现</strong>：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">link_pdf_to_sis</span>(<span class="params">pdf_text: <span class="built_in">str</span></span>) -&gt; <span class="built_in">dict</span>:</span><br><span class="line">    <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    Step 1: 从 PDF 提取课程代号（Anchor Key）</span></span><br><span class="line"><span class="string">    Step 2: 用课程代号查询 SIS 数据库</span></span><br><span class="line"><span class="string">    Step 3: 建立双向映射（PDF ↔ SIS）</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    <span class="comment"># 正则提取候选课程代号</span></span><br><span class="line">    candidates = re.findall(<span class="string">r&quot;\b([A-Z]&#123;2,5&#125;)\s?(\d&#123;4&#125;)\b&quot;</span>, pdf_text)</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># Gemini 去噪（过滤日期词、学期词）</span></span><br><span class="line">    valid_codes = gemini_filter_codes(candidates)</span><br><span class="line">    </span><br><span class="line">    <span class="comment"># Entity Linking: 每个课程代号作为 anchor，查询 SIS</span></span><br><span class="line">    linked_data = &#123;&#125;</span><br><span class="line">    <span class="keyword">for</span> code <span class="keyword">in</span> valid_codes:</span><br><span class="line">        sis_info = query_sis_by_code(code)  <span class="comment"># Playwright 爬取</span></span><br><span class="line">        linked_data[code] = &#123;</span><br><span class="line">            <span class="string">&quot;pdf_metadata&quot;</span>: extract_from_pdf(pdf_text, code),</span><br><span class="line">            <span class="string">&quot;sis_metadata&quot;</span>: sis_info,  <span class="comment"># 实时数据</span></span><br><span class="line">            <span class="string">&quot;last_updated&quot;</span>: datetime.now()</span><br><span class="line">        &#125;</span><br><span class="line">    </span><br><span class="line">    <span class="keyword">return</span> linked_data</span><br></pre></td></tr></table></figure>
+
+<p><strong>为什么 SIS 优先？</strong></p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>PDF</th>
+<th>SIS</th>
+<th>优先级</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>时效性</strong></td>
+<td>静态（年度更新）</td>
+<td>动态（每学期更新）</td>
+<td>✅ SIS</td>
+</tr>
+<tr>
+<td><strong>准确性</strong></td>
+<td>可能过时（如”Fall”但实际改到 Spring）</td>
+<td>实时（当前学期真实数据）</td>
+<td>✅ SIS</td>
+</tr>
+<tr>
+<td><strong>完整性</strong></td>
+<td>只有课程列表</td>
+<td>时间&#x2F;地点&#x2F;老师&#x2F;容量</td>
+<td>✅ SIS</td>
+</tr>
+<tr>
+<td><strong>权威性</strong></td>
+<td>官方发布</td>
+<td>官方系统</td>
+<td>⚠️ 平级，但 SIS 更实时</td>
+</tr>
+</tbody></table>
+<p><strong>结果</strong>：当用户问”CSC3100 这学期什么时候开”时，系统返回 SIS 的实时数据（”Mon 10:00, Tue 14:00”），而非 PDF 的模糊描述（”Fall Semester”），避免了 <strong>Hallucination</strong>（LLM 编造答案）。</p>
+<hr>
+<h4 id="5-存储与维护：Hot-swappable-Knowledge-Base-与-File-as-Database-架构"><a href="#5-存储与维护：Hot-swappable-Knowledge-Base-与-File-as-Database-架构" class="headerlink" title="5. 存储与维护：Hot-swappable Knowledge Base 与 File-as-Database 架构"></a>5. 存储与维护：Hot-swappable Knowledge Base 与 File-as-Database 架构</h4><p><strong>核心问题</strong>：如何在不中断服务的情况下更新知识库？</p>
+<p><strong>架构决策：File-as-Database + Git Version Control</strong></p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">knowledge_base/</span><br><span class="line">├── courses_sis_detail/</span><br><span class="line">│   ├── courses/</span><br><span class="line">│   │   ├── CSC1001/</span><br><span class="line">│   │   │   └── terms/</span><br><span class="line">│   │   │       ├── <span class="number">2510</span>/</span><br><span class="line">│   │   │       │   ├── metadata.json  <span class="comment"># 开课信息</span></span><br><span class="line">│   │   │       │   └── detail.json    <span class="comment"># 课程详情</span></span><br><span class="line">│   │   │       ├── <span class="number">2520</span>/</span><br><span class="line">│   │   │       └── <span class="number">2650</span>/</span><br><span class="line">│   │   └── CSC3100/</span><br><span class="line">│   └── all_courses_ai.txt  <span class="comment"># 课程代号索引</span></span><br></pre></td></tr></table></figure>
+
+<p><strong>Hot-swappable 更新机制</strong>：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">HotSwappableKnowledgeBase</span>:</span><br><span class="line">    <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">    File-as-Database: 用文件系统代替传统数据库</span></span><br><span class="line"><span class="string">    优势：零停机更新、Git 版本控制、易于备份</span></span><br><span class="line"><span class="string">    &quot;&quot;&quot;</span></span><br><span class="line">    </span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">update_course</span>(<span class="params">self, course_code: <span class="built_in">str</span>, term: <span class="built_in">str</span>, new_data: <span class="built_in">dict</span></span>):</span><br><span class="line">        <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">        Atomic Update: 写入临时文件 → 原子替换</span></span><br><span class="line"><span class="string">        &quot;&quot;&quot;</span></span><br><span class="line">        course_dir = Path(<span class="string">f&quot;knowledge_base/courses/<span class="subst">&#123;course_code&#125;</span>/terms/<span class="subst">&#123;term&#125;</span>&quot;</span>)</span><br><span class="line">        temp_file = course_dir / <span class="string">&quot;metadata.json.tmp&quot;</span></span><br><span class="line">        </span><br><span class="line">        <span class="comment"># 写入临时文件</span></span><br><span class="line">        temp_file.write_text(json.dumps(new_data, indent=<span class="number">2</span>))</span><br><span class="line">        </span><br><span class="line">        <span class="comment"># 原子替换（Windows: rename 是原子操作）</span></span><br><span class="line">        temp_file.replace(course_dir / <span class="string">&quot;metadata.json&quot;</span>)</span><br><span class="line">        </span><br><span class="line">        <span class="comment"># 后端自动检测文件变更（watchdog 或定期 reload）</span></span><br><span class="line">        <span class="variable language_">self</span>.reload_index()</span><br><span class="line">    </span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">reload_index</span>(<span class="params">self</span>):</span><br><span class="line">        <span class="string">&quot;&quot;&quot;</span></span><br><span class="line"><span class="string">        Lazy Reload: 只在需要时重新加载索引</span></span><br><span class="line"><span class="string">        &quot;&quot;&quot;</span></span><br><span class="line">        <span class="variable language_">self</span>.index = &#123;&#125;</span><br><span class="line">        <span class="keyword">for</span> course_dir <span class="keyword">in</span> Path(<span class="string">&quot;knowledge_base/courses&quot;</span>).iterdir():</span><br><span class="line">            code = course_dir.name</span><br><span class="line">            <span class="variable language_">self</span>.index[code] = <span class="variable language_">self</span>._load_course_metadata(course_dir)</span><br></pre></td></tr></table></figure>
+
+<p><strong>为什么不用传统数据库（SQLite&#x2F;PostgreSQL）？</strong></p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>更新复杂度</th>
+<th>版本控制</th>
+<th>部署复杂度</th>
+<th>选择</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>SQLite</strong></td>
+<td>中（需要 migration）</td>
+<td>❌ 二进制文件，Git diff 不可读</td>
+<td>中（需要 schema）</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>PostgreSQL</strong></td>
+<td>高（需要 DBA）</td>
+<td>❌ 需要额外工具</td>
+<td>高（需要服务）</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>File-as-Database</strong></td>
+<td>低（直接替换文件）</td>
+<td>✅ Git 原生支持，diff 清晰</td>
+<td>低（零配置）</td>
+<td>✅</td>
+</tr>
+</tbody></table>
+<p><strong>Agility 优势</strong>：</p>
+<ol>
+<li><p><strong>零停机更新</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 更新单个课程：直接替换文件</span></span><br><span class="line"><span class="built_in">cp</span> new_metadata.json knowledge_base/courses/CSC1001/terms/2510/metadata.json</span><br><span class="line"><span class="comment"># 后端自动检测变更（watchdog 或定期 reload）</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p><strong>Git 版本控制</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">git diff knowledge_base/courses/CSC1001/terms/2510/metadata.json</span><br><span class="line"><span class="comment"># 清晰看到：哪些课程更新了、何时更新、谁更新的</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p><strong>易于备份</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 整个知识库 = 一个文件夹</span></span><br><span class="line">tar -czf knowledge_base_backup_2025-12-24.tar.gz knowledge_base/</span><br></pre></td></tr></table></figure>
+</li>
+<li><p><strong>快速回滚</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 如果更新出错，直接 Git revert</span></span><br><span class="line">git checkout HEAD~1 -- knowledge_base/courses/CSC1001/</span><br></pre></td></tr></table></figure></li>
+</ol>
+<p><strong>Trade-off：Latency vs. Agility</strong></p>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>File-as-Database</th>
+<th>SQLite</th>
+<th>PostgreSQL</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>读取单课程</strong></td>
+<td>~5ms（文件 I&#x2F;O）</td>
+<td>~1ms（索引查询）</td>
+<td>~2ms（网络 + 查询）</td>
+</tr>
+<tr>
+<td><strong>批量更新</strong></td>
+<td>~50ms（文件替换）</td>
+<td>~20ms（批量 INSERT）</td>
+<td>~30ms（批量 INSERT）</td>
+</tr>
+<tr>
+<td><strong>版本控制</strong></td>
+<td>✅ Git 原生</td>
+<td>❌ 需要导出</td>
+<td>❌ 需要导出</td>
+</tr>
+<tr>
+<td><strong>部署复杂度</strong></td>
+<td>✅ 零配置</td>
+<td>⚠️ 需要 schema</td>
+<td>❌ 需要服务</td>
+</tr>
+</tbody></table>
+<p><strong>结论</strong>：对于 &lt;2K 文档的知识库，文件系统的 <strong>5ms 读取延迟</strong>（vs. SQLite 的 1ms）是可接受的 trade-off，换来了<strong>零停机更新</strong>和<strong>Git 原生版本控制</strong>的敏捷性。</p>
+<hr>
+<h4 id="6-模型选择：Gemini-2-5-Flash-vs-3-0-的权衡"><a href="#6-模型选择：Gemini-2-5-Flash-vs-3-0-的权衡" class="headerlink" title="6. 模型选择：Gemini 2.5 Flash vs. 3.0 的权衡"></a>6. 模型选择：Gemini 2.5 Flash vs. 3.0 的权衡</h4><table>
 <thead>
 <tr>
 <th>维度</th>
@@ -546,12 +758,12 @@
 <li><strong>团队成员</strong>：感谢几位同组成员在初期帮助采集培养方案 PDF、整理课程清单、协助内测等基础工作，为后续开发和优化提供了坚实的数据基础和用户反馈</li>
 </ul>
 <hr>
-<p><em>GitHub Repo (Private): <a target="_blank" rel="noopener" href="https://github.com/Jerry0310no1/holistic-assistant">holistic-assistant</a></em><br><em>Contact: <a href="mailto:&#49;&#x32;&#53;&#48;&#57;&#x30;&#52;&#x34;&#x35;&#x40;&#108;&#x69;&#110;&#x6b;&#46;&#99;&#x75;&#104;&#x6b;&#46;&#101;&#x64;&#x75;&#x2e;&#x63;&#110;">125090445@link.cuhk.edu.cn</a></em></p>
+<p><em>GitHub Repo (Private): <a target="_blank" rel="noopener" href="https://github.com/Jerry0310no1/holistic-assistant">holistic-assistant</a></em><br><em>Contact: <a href="mailto:&#x31;&#50;&#53;&#48;&#57;&#48;&#x34;&#x34;&#53;&#x40;&#x6c;&#105;&#x6e;&#x6b;&#x2e;&#x63;&#x75;&#x68;&#x6b;&#x2e;&#x65;&#x64;&#x75;&#46;&#x63;&#110;">125090445@link.cuhk.edu.cn</a></em></p>
 
       
     </div>
     <footer class="article-footer">
-      <a data-url="https://jerry0310no1.github.io/2025/12/24/holistic-assistant-case-study/" data-id="cuidDeaErPQxnmoxxnckH_8OM" data-title="Holistic Assistant: 一个面向 1500+ 学生的 RAG 学术顾问系统 — 从信息碎片化到结构化决策" class="article-share-link"><span class="fa fa-share">Share</span></a>
+      <a data-url="https://jerry0310no1.github.io/2025/12/24/holistic-assistant-case-study/" data-id="cuidhN3QW93lnly4wuF7j3RfB" data-title="Holistic Assistant: 一个面向 1500+ 学生的 RAG 学术顾问系统 — 从信息碎片化到结构化决策" class="article-share-link"><span class="fa fa-share">Share</span></a>
       
       
       
